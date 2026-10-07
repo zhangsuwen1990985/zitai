@@ -262,12 +262,34 @@ async function downgrade(){
 
 async function initCamera(){
   showLoad("正在打开摄像头（浏览器弹出询问请点“允许”）…");
+  // 权限预检：若已被浏览器拦截，直接给出明确指引，避免无限转圈
+  try{
+    if(navigator.permissions&&navigator.permissions.query){
+      const ps=await navigator.permissions.query({name:"camera"});
+      if(ps.state==="denied")throw new Error("摄像头权限已被浏览器拦截：请点地址栏左侧摄像头/盾牌图标，把摄像头改为“允许”，再刷新页面。");
+    }
+  }catch(e){ if(e.message.indexOf("拦截")>=0) throw e; }
   // 单例保护：重入/重启时先彻底释放旧流，避免同一摄像头被反复抢占
   if(video.srcObject){try{video.srcObject=null;}catch(_){}}
   if(stream){try{stream.getTracks().forEach(t=>t.stop());}catch(_){}stream=null;}
-  stream=await navigator.mediaDevices.getUserMedia({
-    video:{width:{ideal:640},height:{ideal:480},facingMode:"user"},audio:false
-  });
+  // getUserMedia 加 15 秒超时：权限请求挂起（不弹窗/被系统隐私设置挡住）时给出可操作提示
+  let toId;
+  const timer=new Promise((_,rej)=>{toId=setTimeout(()=>rej(new Error(
+    "摄像头 15 秒未响应。请依次检查：①地址栏左侧图标→摄像头选“允许”；②Windows设置→隐私和安全→摄像头→打开“允许桌面应用访问摄像头”；③关闭会议/相机/另一个占用摄像头的网页后点重试。"
+  )),15000);});
+  try{
+    stream=await Promise.race([navigator.mediaDevices.getUserMedia({
+      video:{width:{ideal:640},height:{ideal:480},facingMode:"user"},audio:false
+    }),timer]);
+  }catch(e){
+    clearTimeout(toId);
+    if(e&&(e.name==="NotAllowedError"||e.name==="SecurityError"))
+      throw new Error("摄像头权限被拒绝：请点地址栏左侧摄像头图标选“允许”，再刷新页面。");
+    if(e&&e.name==="NotFoundError")
+      throw new Error("没检测到摄像头设备：请确认电脑有摄像头，且 Windows 设置里已允许应用访问摄像头。");
+    throw e;
+  }
+  clearTimeout(toId);
   video.srcObject=stream;
   await new Promise((res,rej)=>{
     const to=setTimeout(()=>{
