@@ -1,0 +1,1390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-store,no-cache,must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<title>姿态灯塔 · 电脑管家 v7</title>
+<style>
+  :root{--bg:#070b14;--card:#0f1626;--card2:#15203380;--line:#22304d;--txt:#dbe3f4;--dim:#7e8aa6;
+    --green:#2ee6a8;--blue:#4da3ff;--yellow:#ffd23f;--red:#ff5470;--purple:#b388ff;--white:#cfe0ff}
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{height:100%}
+  body{background:var(--bg);color:var(--txt);font-family:"PingFang SC","Microsoft YaHei",sans-serif;overflow-y:auto}
+  body::-webkit-scrollbar{width:10px}body::-webkit-scrollbar-thumb{background:#22304d;border-radius:8px}
+  #app{display:grid;grid-template-columns:300px 1fr 392px;grid-template-rows:minmax(600px,calc(100vh - 206px)) auto auto;gap:10px;padding:10px;min-height:100vh}
+  .col{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;overflow:hidden;display:flex;flex-direction:column;gap:12px;min-height:0}
+
+  /* 左栏 */
+  #left{align-items:center;text-align:center}
+  #ring{width:132px;height:132px;border-radius:50%;margin-top:6px;flex:0 0 auto;
+    background:radial-gradient(circle at 50% 42%,#0c1424 62%,#0a1120 64%);
+    border:3px solid var(--green);box-shadow:0 0 26px var(--green),inset 0 0 22px #0c1a18;
+    display:flex;align-items:center;justify-content:center;transition:border-color .5s,box-shadow .5s}
+  #ringInner{font-size:40px;line-height:1}
+  @keyframes breathe{50%{box-shadow:0 0 44px var(--green),inset 0 0 30px #0e201d}}
+  @keyframes steady{50%{box-shadow:0 0 16px var(--blue),inset 0 0 14px #0c1830}}
+  @keyframes blink{50%{opacity:.45}}
+  @keyframes deepen{0%,100%{box-shadow:0 0 20px var(--red)}50%{box-shadow:0 0 52px var(--red)}}
+  @keyframes pulse{0%,100%{box-shadow:0 0 18px var(--purple)}50%{box-shadow:0 0 48px var(--purple)}}
+  #ring.breathe{animation:breathe 2.6s ease-in-out infinite}
+  #ring.steady{animation:steady 2.2s ease-in-out infinite}
+  #ring.blink{animation:blink 1s infinite}
+  #ring.deepen{animation:deepen 1.6s ease-in-out infinite}
+  #ring.pulse{animation:pulse 1.4s ease-in-out infinite}
+  #stateName{font-size:25px;font-weight:800}
+  #stateTimer{font-size:30px;font-weight:700;font-family:Consolas,monospace;letter-spacing:1px}
+  #stateCond{font-size:12.5px;color:var(--dim);line-height:1.7;min-height:40px}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:9px;width:100%}
+  .stat{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:13px 6px}
+  .stat b{display:block;font-size:23px;font-family:Consolas,monospace}
+  .stat span{font-size:11.5px;color:var(--dim)}
+  #leftHint{font-size:11px;color:var(--dim);line-height:1.7;margin-top:auto}
+
+  /* 中栏 */
+  #mid{padding:0}
+  #midBar{display:flex;align-items:center;gap:10px;padding:8px 12px;font-size:12.5px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  #midBar .grow{flex:1}
+  #detWrap{position:relative;flex:1;min-height:0;background:#000;border-radius:0 0 16px 16px;overflow:hidden}
+  #det{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000}
+  #restartBtn{display:none;padding:5px 14px;border-radius:8px;border:1px solid var(--yellow);
+    background:transparent;color:var(--yellow);font-size:12.5px;cursor:pointer;font-family:inherit}
+
+  /* 右栏 */
+  #right{overflow-y:auto;padding-right:8px}
+  #right::-webkit-scrollbar{width:8px}#right::-webkit-scrollbar-thumb{background:#22304d;border-radius:8px}
+  .groupt{font-size:12px;color:var(--dim);margin:10px 0 2px;letter-spacing:.5px}
+  .meter{margin:7px 0}
+  .mTop{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px}
+  .mTop .v{font-family:Consolas,monospace;font-weight:700}
+  .mTrack{position:relative;height:7px;background:#0b1322;border-radius:6px;overflow:hidden}
+  .mFill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:6px;background:var(--green);transition:width .18s,background .2s}
+  .mFill.warn{background:var(--yellow)}.mFill.bad{background:var(--red)}
+  .mMark{position:absolute;top:-2px;width:2px;height:11px;background:#5a6a8c}
+  .mMark.bad{background:var(--red)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}
+  .chip{font-size:11.5px;padding:4px 10px;border-radius:99px;border:1px solid var(--line);
+    color:var(--dim);background:#0c1424;opacity:.62;transition:.15s}
+  .chip.on{opacity:1;font-weight:700;color:#06121f}
+  #rawLine{font-size:11px;color:var(--dim);margin-top:4px;font-family:Consolas,monospace;min-height:15px}
+
+  /* 手机检测卡 */
+  #phoneCard{border:1px solid var(--line);border-radius:14px;padding:10px;background:#0b1322;transition:.2s}
+  #phoneCard.on{border-color:var(--red);box-shadow:0 0 16px #ff547055;background:#1a0d16}
+  .phHead{display:flex;align-items:center;justify-content:space-between;font-size:13px;margin-bottom:7px}
+  .phHead b{color:var(--dim)}#phoneCard.on .phHead b{color:var(--red)}
+  #phMini{width:100%;height:132px;border-radius:9px;background:#05080f;display:block}
+  .phGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px;text-align:center}
+  .phGrid div{background:#0c1424;border:1px solid var(--line);border-radius:8px;padding:5px 2px}
+  .phGrid span{display:block;font-size:10px;color:var(--dim)}.phGrid b{font-size:13px;font-family:Consolas,monospace}
+
+  /* 数字人镜像大区 */
+  #avatarSec{grid-column:1/4;position:relative;background:linear-gradient(180deg,#0a1020,#070b14);
+    border:1px solid var(--line);border-radius:16px;height:430px;overflow:hidden}
+  #avCv{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .avHead{position:absolute;left:18px;top:14px;z-index:3;pointer-events:none}
+  .avTitle{font-size:17px;font-weight:800;letter-spacing:1px;
+    background:linear-gradient(90deg,#2ee6a8,#4da3ff,#b388ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .avSub{font-size:11.5px;color:var(--dim);margin-top:3px}
+  .avStats{position:absolute;right:18px;top:16px;display:flex;gap:18px;z-index:3;font-family:Consolas,monospace;font-size:12.5px;color:var(--dim)}
+  .avStats b{color:var(--green)}
+  .avBadge{display:inline-block;margin-top:8px;font-size:11px;color:var(--green);border:1px solid #1d7a5b;
+    border-radius:99px;padding:2px 12px;background:#0c1f1b88}
+
+  /* 底部 */
+  #bottom{grid-column:1/4;background:var(--card);border:1px solid var(--line);border-radius:16px;
+    display:flex;flex-direction:column;min-height:0;height:188px}
+  .tabs{display:flex;gap:4px;padding:8px 12px 0;flex:0 0 auto}
+  .tab{padding:7px 16px;font-size:12.5px;border-radius:9px 9px 0 0;color:var(--dim);cursor:pointer;border:1px solid transparent}
+  .tab.on{color:var(--green);background:#0c1424;border-color:var(--line);border-bottom-color:#0c1424;position:relative;z-index:2}
+  .pane{display:none;flex:1;overflow-y:auto;padding:10px 14px;font-size:12.5px}.pane.on{display:block}
+  #shotGrid{display:flex;gap:10px;flex-wrap:wrap}
+  .shot{width:150px}.shot img{width:150px;height:94px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer;display:block}
+  .shot span{display:block;text-align:center;font-size:11px;color:var(--dim);margin-top:3px;font-family:Consolas,monospace}
+  .note{color:var(--dim);font-size:12px}
+  .logrow{font-family:Consolas,monospace;font-size:12px;padding:2px 0;color:#aebbd6}
+  .logrow.ok{color:var(--green)}.logrow.warn{color:var(--yellow)}.logrow.bad{color:var(--red)}
+  .setrow{display:flex;align-items:center;gap:12px;margin:7px 0;color:var(--dim);font-size:13px}
+  .btn{padding:8px 18px;border-radius:9px;border:1px solid var(--green);background:transparent;color:var(--green);
+    cursor:pointer;font-size:13px;font-family:inherit}
+  .btn.gray{border-color:var(--line);color:var(--txt)}
+  .sw{position:absolute;opacity:0;width:0;height:0}+label.swl{position:relative;display:inline-block;width:42px;height:23px;background:#243150;border-radius:99px;cursor:pointer;transition:.2s;margin-right:8px;vertical-align:middle}
+  label.swl::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;border-radius:50%;background:#8ea0c2;transition:.2s}
+  .sw:checked+label.swl{background:#1d7a5b}.sw:checked+label.swl::after{left:21px;background:var(--green)}
+  #modal{position:fixed;inset:0;background:rgba(3,6,12,.85);display:none;align-items:center;justify-content:center;z-index:99}
+  #modal img{max-width:92vw;max-height:92vh;border-radius:10px}
+
+  /* 开场灯塔动画 */
+  #intro{position:fixed;inset:0;background:#04060d;z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;animation:introOut .7s ease 2.6s forwards}
+  @keyframes introOut{to{opacity:0;visibility:hidden}}
+  .beam{position:absolute;left:50%;top:38%;width:340px;height:120px;transform-origin:left center;
+    background:linear-gradient(90deg,rgba(46,230,168,.55),rgba(46,230,168,0));filter:blur(6px);
+    clip-path:polygon(0 42%,100% 0,100% 100%,0 58%);animation:sweep 2.2s linear infinite}
+  .beam.b2{animation-delay:-1.1s;transform:scaleX(-1)}
+  @keyframes sweep{0%{transform:rotate(-32deg)}50%{transform:rotate(32deg)}100%{transform:rotate(-32deg)}}
+  .beam.b2{animation-name:sweep2}
+  @keyframes sweep2{0%{transform:scaleX(-1) rotate(-32deg)}50%{transform:scaleX(-1) rotate(32deg)}100%{transform:scaleX(-1) rotate(-32deg)}}
+  .lampDot{position:absolute;left:50%;top:38%;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;
+    background:var(--green);box-shadow:0 0 40px var(--green),0 0 90px #2ee6a880;animation:lampPulse 1.2s ease-in-out infinite}
+  @keyframes lampPulse{50%{transform:scale(1.25)}}
+  .tower{position:absolute;left:50%;top:calc(38% + 15px);width:0;height:0;margin-left:-34px;
+    border-left:34px solid transparent;border-right:34px solid transparent;border-bottom:120px solid #182440}
+  #intro h1{position:relative;margin-top:150px;font-size:52px;font-weight:900;letter-spacing:14px;
+    background:linear-gradient(180deg,#eaf3ff,#4da3ff);-webkit-background-clip:text;background-clip:text;color:transparent;
+    animation:titleIn 1.2s ease .3s both}
+  @keyframes titleIn{from{opacity:0;letter-spacing:30px;transform:translateY(18px)}to{opacity:1;letter-spacing:14px;transform:none}}
+  #intro p{position:relative;margin-top:14px;color:#7e8aa6;font-size:15px;letter-spacing:6px;animation:titleIn 1.2s ease .8s both}
+
+  /* 今日战报 */
+  #reportOv{position:fixed;inset:0;background:rgba(3,6,12,.94);z-index:98;display:none;align-items:center;justify-content:center}
+  #reportCard{text-align:center;animation:repIn .5s ease}
+  @keyframes repIn{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:none}}
+  #repGrade{font-size:150px;font-weight:900;line-height:1;font-family:Consolas,monospace;
+    text-shadow:0 0 60px currentColor}
+  #repSub{font-size:15px;color:var(--dim);letter-spacing:4px;margin-top:2px}
+  #repLine{font-size:19px;margin:18px 0 6px;font-weight:700}
+  #repBeat{font-size:14px;color:var(--yellow);margin-bottom:16px}
+  #repStats{display:flex;gap:14px;justify-content:center;margin-bottom:22px}
+  #repStats div{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px 20px;min-width:96px}
+  #repStats b{display:block;font-size:26px;font-family:Consolas,monospace}
+  #repStats span{font-size:12px;color:var(--dim)}
+  #repClose{padding:9px 34px;border-radius:10px;border:1px solid var(--green);background:transparent;color:var(--green);cursor:pointer;font-size:14px;font-family:inherit}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ 左：灯环 + 状态 + 统计 ============ -->
+  <section class="col" id="left">
+    <div id="ring" class="breathe"><span id="ringInner">🟢</span></div>
+    <div id="stateName" style="color:var(--green)">启动中</div>
+    <div id="demoTag" style="display:none;font-size:12px;font-weight:700;color:#06121f;background:var(--yellow);border-radius:8px;padding:3px 12px">⚡ 演示加速 ×5</div>
+    <div id="stateTimer">00:00</div>
+    <div id="stateCond">正在连接视觉检测台…</div>
+    <div class="stats">
+      <div class="stat"><b id="statFocus">0</b><span>今日专注(分)</span></div>
+      <div class="stat"><b id="statPhone">0</b><span>玩手机被抓</span></div>
+      <div class="stat"><b id="statSleepy">0</b><span>犯困提醒</span></div>
+      <div class="stat"><b id="statMild">0</b><span>分心提醒</span></div>
+    </div>
+    <div class="groupt" style="width:100%;margin-top:2px">今日状态时间轴</div>
+    <canvas id="tlCv" width="268" height="34" style="width:100%;height:34px;border-radius:8px;background:#0b1322;border:1px solid var(--line)"></canvas>
+    <div style="font-size:10px;color:var(--dim);width:100%;text-align:left;line-height:1.6">🟢专注 🔵查资料 🟡分心 🔴手机 🟣犯困 ⚪离开</div>
+    <button class="btn" id="reportBtn" style="width:100%">📊 今日战报</button>
+    <div id="leftHint">坐直正对屏幕 3 秒自动校准<br>所有数据只存在本机，不上传</div>
+  </section>
+
+  <!-- ============ 中：检测台 ============ -->
+  <section class="col" id="mid">
+    <div id="midBar">
+      <span id="detStat">检测台：连接中…</span>
+      <span class="grow"></span>
+      <button id="vizBtn" title="切换动作捕捉显示密度">🌑 全息动捕：关</button>
+      <button id="restartBtn">重启检测台</button>
+    </div>
+    <div id="detWrap">
+      <iframe id="det" src="detector.html?v=10" allow="camera; microphone" title="检测台"></iframe>
+      <div id="calibOv" style="display:none;position:absolute;inset:0;background:rgba(5,8,15,.80);z-index:5;flex-direction:column;align-items:center;justify-content:center;text-align:center">
+        <div style="font-size:22px;font-weight:800">请坐直，正对屏幕</div>
+        <div id="calibNum" style="font-size:84px;font-weight:800;color:var(--green);font-family:Consolas,monospace;line-height:1.2">3</div>
+        <div style="font-size:13px;color:var(--dim)">正在采集你的标准坐姿，请勿低头或转头…</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 右：手机框 + 实时信号 ============ -->
+  <section class="col" id="right">
+    <div id="phoneCard">
+      <div class="phHead"><b>📱 手机检测框</b><span id="phState" style="color:var(--dim)">未发现</span></div>
+      <canvas id="phMini" width="340" height="132"></canvas>
+      <div class="phGrid">
+        <div><span>置信度</span><b id="phConf">--</b></div>
+        <div><span>持续</span><b id="phHold">0.0s</b></div>
+        <div><span>位置</span><b id="phPos">--</b></div>
+      </div>
+    </div>
+
+  <div class="groupt">实时判定（结论信号）</div>
+  <div class="chips">
+    <span class="chip" id="cpUp">坐姿端正</span>
+    <span class="chip" id="cpWrite">低头写字</span>
+    <span class="chip" id="cpDown">低头过久</span>
+    <span class="chip" id="cpBlink">持续闭眼</span>
+    <span class="chip" id="cpYawn">打哈欠</span>
+    <span class="chip" id="cpPhone">手机在场</span>
+  </div>
+  <div id="rawLine"></div>
+  <div id="detWarn" style="display:none;margin:8px 0;padding:10px 14px;border-radius:10px;background:#3a1520;border:1px solid #ff5470;color:#ffb3c0;font-size:13px;font-weight:600"></div>
+
+  <div id="meterHost"></div>
+  </section>
+
+  <!-- ============ 数字人镜像（神经链 Avatar） ============ -->
+  <section id="avatarSec">
+    <canvas id="avCv"></canvas>
+    <div class="avHead">
+      <div class="avTitle">🧬 数字人镜像 · NEURAL AVATAR</div>
+      <div class="avSub">四模型融合：人脸478 · 身体33关节3D · 双手42节点 · 逐像素人体分割 · 神经链逆向驱动</div>
+      <span class="avBadge" id="avBadge">等待人体进入画面…</span>
+    </div>
+    <div class="avStats">
+      <span>关节 <b id="avJoints">0</b></span>
+      <span>驱动 <b id="avFps">0</b>Hz</b></span>
+      <span>深度 <b id="avZ">0.00</b></span>
+    </div>
+  </section>
+
+  <!-- ============ 底部：相册 / 日志 / 设置 / 自启 ============ -->
+  <section id="bottom">
+    <div class="tabs">
+      <div class="tab on" data-p="paneShot">🖼 证据相册</div>
+      <div class="tab" data-p="paneLog">📋 运行日志</div>
+      <div class="tab" data-p="paneSetting">⚙️ 设置与校准</div>
+      <div class="tab" data-p="paneStartup">🛠 开机自启/关闭工具</div>
+    </div>
+    <div class="pane on" id="paneShot">
+      <div class="note" style="margin-bottom:8px">手机在画面中持续 <b style="color:var(--red)">满 7 秒</b> 自动拍一张；犯困也会拍。照片自带日期时间水印，存在本机浏览器里，最多 30 张，满了自动删最旧的。</div>
+      <div id="shotGrid"><span class="note">还没有证据照片。</span></div>
+    </div>
+    <div class="pane" id="paneLog"><div id="logList"></div></div>
+    <div class="pane" id="paneSetting">
+      <div class="setrow"><input type="checkbox" class="sw" id="swSay" checked><label class="swl" for="swSay"></label>语音提醒</div>
+      <div class="setrow"><input type="checkbox" class="sw" id="swBell" checked><label class="swl" for="swBell"></label>长时间玩手机时铃声提醒</div>
+      <div class="setrow"><input type="checkbox" class="sw" id="swDemo"><label class="swl" for="swDemo"></label>演示加速 ×5（比赛现场用，所有计时快5倍）</div>
+      <div class="setrow" style="margin-top:14px">
+        <button class="btn" id="calibBtn">重新校准（坐直看屏幕2秒）</button>
+        <span id="stateCond2" class="note" style="margin-left:6px"></span>
+      </div>
+      <div class="setrow"><button class="btn gray" id="clearShots">清空证据相册</button></div>
+    </div>
+    <div class="pane" id="paneStartup">
+      <p class="note" style="line-height:1.9">
+      ① 点下面按钮会下载一个 <b>开机自启.bat</b>；② 按 <b>Win + R</b>，输入 <b>shell:startup</b> 回车，会打开“启动”文件夹；
+      ③ 把下载的 <b>开机自启.bat</b> 拖进这个文件夹即可。以后开机会自动打开姿态灯塔。<br>
+      关闭：把那个文件夹里的 bat 删掉就行；监测过程中直接关网页也会立刻停止摄像头。</p>
+      <div class="setrow"><button class="btn" id="startupBtn">生成 开机自启.bat</button><span id="startupTip" class="note"></span></div>
+    </div>
+  </section>
+</div>
+
+<div id="modal" onclick="this.style.display='none'"><img id="modalImg"></div>
+
+<div id="intro" onclick="this.style.display='none'">
+  <div class="beam"></div><div class="beam b2"></div>
+  <div class="lampDot"></div><div class="tower"></div>
+  <h1>姿态灯塔</h1>
+  <p>守护你的每一次专注</p>
+</div>
+
+<div id="reportOv">
+  <div id="reportCard">
+    <div id="repGrade">S</div>
+    <div id="repSub">今日专注力评级</div>
+    <div id="repLine"></div>
+    <div id="repBeat"></div>
+    <div id="repStats"></div>
+    <button id="repClose">收下战报</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const det=$("det");
+
+const COLORS={focus:"#2ee6a8",lookup:"#4da3ff",mild:"#ffd23f",phone:"#ff5470",sleepy:"#b388ff",away:"#cfe0ff","?":"#7e8aa6"};
+const EMOJI={focus:"🟢",lookup:"🔵",mild:"🟡",phone:"🔴",sleepy:"🟣",away:"⚪","?":"❓"};
+const NAMES={focus:"专注学习",lookup:"查资料",mild:"轻度分心",phone:"玩手机",sleepy:"犯困提醒",away:"人离开了","?":"信号中断"};
+const CONDS={focus:"状态不错，保持住",lookup:"拿着手机/抬头看资料，正常查资料",
+  mild:"东张西望 / 坐不住 / 说话 / 手机拿太久",phone:"持续低头玩手机，快收回来",
+  sleepy:"闭眼 / 哈欠 / 趴桌，该歇一下了",away:"座位上没人","?":"检测台信号中断"};
+const VOCAL={
+  focus:["状态拉满，继续保持！","专注的你最酷，稳住节奏","沉浸感满分，继续加油"],
+  lookup:["抬头看资料，正常查阅中","查资料呢，注意时间别太长哦"],
+  mild:["注意力飘啦，收回来！","好像分心了哦，深呼吸调整一下","有点走神，让眼睛休息5秒"],
+  phone:["手机放一放，作业更重要","又刷手机啦，快收回来","别让手机偷走你的时间哦"],
+  sleepy:["困啦？起来伸个懒腰吧","眼皮打架了，起来走两步","别睡着哦，喝口水精神一下"],
+  away:["人去哪儿啦，回来继续~","座位空了，是不是去上厕所啦"]
+};
+function sayState(s){
+  if(!cfg.say)return;
+  const pool=VOCAL[s];if(!pool||!pool.length)return;
+  const t=pool[Math.floor(Math.random()*pool.length)];
+  try{const u=new SpeechSynthesisUtterance(t);u.lang="zh-CN";u.rate=1.05;speechSynthesis.cancel();speechSynthesis.speak(u);}catch(_){}
+}
+const cfg={yellowT:10,redT:20,hardT:45,awayT:15,talk:true,say:true,bell:true,demo:false};
+const SP=()=>cfg.demo?5:1;   // 演示加速倍率：开启后所有计时快5倍
+
+/* ---------- 与检测台通信 ---------- */
+const WIN=[];            // 最近 18 帧原始信号
+const HIST=[];           // 最近表情历史（占比用）
+let base=null;           // 校准基线
+let noiseDB=-55,noiseFloor=-55;
+let cachedPhone=null,cachedPhoneT=0,cachedScene=null,cachedSceneT=0;
+let lastSigT=0,hbAt=0,detReady=false;
+let sigRate=0,sigCount=0;
+let state="?",raw="?",cand="?",candT=Date.now(),stateEnter=Date.now();
+let noFace=0,downStill=0,yawHold=0,phoneHold=0,phoneGrace=0,moveEMA=0,_speakHold=0,faceLostT=0;
+let restHold=0,fidgetHold=0,slouchHold=0,poseDeskHold=0,poseCur=null;
+let lastBri=255,restTipAt=0,micOK=false;
+// 状态切换确认时间（毫秒）：回到专注必须连续保持 4 秒，防止"一秒假装专注"立刻洗白
+const DWELL={focus:4000,mild:2500,lookup:1200,phone:800,sleepy:1200,away:1500};
+let phoneSnap7=false;    // 本段手机满7秒是否已拍
+let pendingShot=null;
+
+window.addEventListener("message",e=>{
+  const d=e.data;if(!d||typeof d!=="object")return;
+  if(d.type==="detector_loaded"){try{det.contentWindow.postMessage({type:"start"},"*");}catch(_){}return;}
+  if(d.type==="ready"){onDetectorReady();return;}
+  if(d.type==="warn"){log("检测台："+(d.msg||""),"warn");return;}
+  if(d.type==="fatal"){
+    // 绝不自动重建 iframe（会销毁摄像头、反复弹授权）；提示手动重启
+    detReady=false;
+    log("检测台故障（未自动重启）："+(d.msg||""),"bad");
+    $("detStat").innerHTML='<span style="color:var(--red)">检测台已暂停：'+String(d.msg||"推理故障").slice(0,36)+
+      '… 请点右侧 <b>“重启检测台”</b></span>';
+    $("restartBtn").style.display="inline-block";
+    return;
+  }
+  if(d.type==="shot"){
+    if(pendingShot){const st=pendingShot.state;const tm=pendingShot.tm;
+      stampPhoto(d.url,tm).then(url=>addShot(st,url,tm)).catch(()=>addShot(st,d.url,tm));
+      pendingShot=null;}
+    return;
+  }
+  if(d.type==="hb"){hbAt=Date.now();return;}
+  if(d.type==="sig"){
+    hbAt=Date.now();lastSigT=Date.now();sigCount++;
+    // pose fallback：人脸模型没检测到脸时，用 pose 头部关键点近似 yaw/pitch/nr，保证进度条有数据
+    if(d.p33&&d.p33.length>=11&&(!d.face||typeof d.nr!=="number")){
+      const p=d.p33,nose=p[0],lEar=p[7],rEar=p[8],lSh=p[11],rSh=p[12];
+      if(nose&&lEar&&rEar&&lSh&&rSh){
+        const headW=Math.hypot(rEar[0]-lEar[0],rEar[1]-lEar[1]);
+        const shW=Math.hypot(rSh[0]-lSh[0],rSh[1]-lSh[1]);
+        if(shW>.05){
+          const approxNr=headW/shW;                 // 头肩比≈鼻比
+          const approxYaw=Math.atan2(rEar[1]-lEar[1],rEar[0]-lEar[0])*180/Math.PI; // 双耳连线角度≈偏航
+          const approxPitch=((nose[1]-(lEar[1]+rEar[1])/2)/headW)*60;              // 鼻相对双耳高度≈俯仰
+          if(typeof d.nr!=="number")d.nr=approxNr;
+          if(typeof d.yaw!=="number")d.yaw=approxYaw;
+          if(typeof d.pitch!=="number")d.pitch=approxPitch;
+          d.face=d.face||true;   // 标记为有人脸，让校准和判定能跑
+        }
+      }
+    }
+    WIN.push(d);while(WIN.length>18)WIN.shift();
+    if(d.p33){rawPose=d.p33;rawHands=d.h42||[];avLastT=Date.now();avN++;}
+    if(d.phone){cachedPhone=d.phone;cachedPhoneT=Date.now();}
+    if(d.scene){
+      // 解码 base64 -> Uint8Array -> 粒子数组 [x,y,r,g,b]
+      try{
+        const bin=atob(d.scene);const buf=new Uint8Array(bin.length);
+        for(let i=0;i<bin.length;i++)buf[i]=bin.charCodeAt(i);
+        const n=Math.floor(buf.length/5);const pts=new Array(n);
+        for(let i=0;i<n;i++){
+          pts[i]=[buf[i*5]/255,buf[i*5+1]/255,buf[i*5+2],buf[i*5+3],buf[i*5+4]];
+        }
+        cachedScene=pts;cachedSceneT=Date.now();
+      }catch(e){}
+    }
+    if(typeof d.bri==="number")lastBri=d.bri;
+    HIST.push({t:Date.now(),blink:d.blink||0,jaw:d.jaw||0,yaw:d.yaw||0,move:d.move||0,face:!!d.face});
+    if(HIST.length>400)HIST.splice(0,200);
+  }
+});
+function onDetectorReady(){
+  detReady=true;hbAt=Date.now();
+  $("detStat").innerHTML='<span style="color:var(--green)">🟢 553点全息神经动捕 · AI视觉引擎在线</span>';
+  $("restartBtn").style.display="none";
+  log("视觉检测台已就绪","ok");
+  sendViz();
+  autoCalib();
+}
+$("restartBtn").onclick=()=>{
+  det.src="detector.html?v=10&r="+Date.now();
+  detReady=false;$("restartBtn").style.display="none";
+  $("detStat").textContent="检测台：重启中…";
+};
+// 动捕显示三档循环：关（日常）→ 全息骨架 → 密集光网+拖尾（答辩演示）
+const VIZ_MODES=[["off","🌑 全息动捕：关"],["skeleton","🔮 全息光网 · 553点骨架追踪"],["mocap","✨ 全息矩阵 · 万点光网拖尾"]];
+let vizIdx=parseInt(localStorage.getItem("zt_viz")||"0",10)||0;
+function sendViz(){
+  const m=VIZ_MODES[vizIdx];$("vizBtn").textContent=m[1];
+  $("vizBtn").style.color=vizIdx===2?"#b388ff":vizIdx===1?"#4da3ff":"";
+  if(detReady&&det.contentWindow)try{det.contentWindow.postMessage({type:"viz",mode:m[0]},"*");}catch(_){}
+}
+$("vizBtn").onclick=()=>{vizIdx=(vizIdx+1)%3;localStorage.setItem("zt_viz",vizIdx);sendViz();};
+// 心跳：只提示不自动重建
+setInterval(()=>{
+  if(detReady&&Date.now()-hbAt>5000){
+    detReady=false;
+    $("detStat").innerHTML='<span style="color:var(--yellow)">检测台心跳中断，可点“重启检测台”</span>';
+    $("restartBtn").style.display="inline-block";
+  }
+},1000);
+setInterval(()=>{sigRate=sigCount;sigCount=0;},1000);
+
+const median=arr=>{if(!arr.length)return 0;const a=[...arr].sort((x,y)=>x-y);return a[Math.floor(a.length/2)];};
+function smooth(k){return median(WIN.map(w=>w[k]).filter(x=>typeof x==="number"));}
+// 短窗平滑：姿态/表情需要跟手，取最近 n 帧（8帧≈0.33s），避免长中位数把快速摇头/低头平均成 0
+function smoothN(k,n){return median(WIN.slice(-n).map(w=>w[k]).filter(x=>typeof x==="number"));}
+function fracRecent(sec,key,th){
+  const now=Date.now(),n=HIST.filter(h=>now-h.t<sec*1000);
+  if(n.length<3)return 0;
+  return n.filter(h=>h[key]>=th).length/n.length;
+}
+// 自定义条件的时间占比：近 sec 秒内满足 pred 的帧比例（用于频繁张望、持续晃动等"成段"判断）
+function fracPred(sec,pred){
+  const now=Date.now(),n=HIST.filter(h=>now-h.t<sec*1000);
+  if(n.length<6)return 0;
+  return n.filter(pred).length/n.length;
+}
+
+/* ---------- 状态机 ---------- */
+function decide(){
+  const now=Date.now();
+  const face=WIN.some(w=>w.face);
+  const fresh=now-lastSigT<1500;
+  // 姿态/表情/晃动用 8 帧短窗，快速摇头、低头、眨眼都能立刻反映；判定计时器仍在 tick 层做防抖
+  const nr=smoothN("nr",8),pitch=smoothN("pitch",8),yaw=smoothN("yaw",8),
+        ear=smoothN("ear",8),mar=smoothN("mar",8),blink=smoothN("blink",8),
+        jaw=smoothN("jaw",8),mv=smoothN("move",8);
+  const phoneRecent=!!cachedPhone&&(now-cachedPhoneT)<2000;
+  const phoneSeen=WIN.slice(-6).some(w=>w.phone)||phoneRecent;
+  const nrD=base?nr-base.nr:0;
+  const pitchD=base?pitch-base.pitch:0;
+  const yawD=base?yaw-base.yaw:0;
+  const pitchDown=Math.abs(pitchD)>6&&nrD>0.008&&Math.sign(pitchD)===Math.sign(nrD);
+  const down=nrD>0.02||pitchDown;
+  const upright=nrD<=0.02&&Math.abs(pitchD)<=6;
+  // 正常注视屏幕：允许头部轻微移动（比 upright 宽松），方向大致朝前
+  const gazing=nrD<=0.04&&Math.abs(pitchD)<=10&&Math.abs(yawD)<=15;
+  const sp=SP();
+  const writing=down&&mv>=0.0012&&mv<0.03&&fracRecent(1.2/sp,"blink",.65)<.6;
+  const faceRatio=(()=>{const n=WIN.filter(w=>w.face);return WIN.length?n.length/WIN.length:0;})();
+  const faceStable=faceRatio>=.7;
+  const blinkLong=faceStable&&fracRecent(2.2/sp,"blink",.72)>=.78;
+  const yawn=faceStable&&fracRecent(2.2/sp,"jaw",.6)>=.6;
+  const noiseLvl=(()=>{const d=noiseDB-noiseFloor;if(d>=18)return"loud";if(d>=10)return"speech";return"quiet";})();
+  // 持续性信号：防止"偶发一两帧大动作"误判走神，也防止频繁小动作被单帧平滑漏掉
+  const moveFrac=fracPred(3,h=>h.move>0.02);           // 近3秒身体明显晃动的时间占比
+  const yawFrac=fracPred(6,h=>base&&Math.abs(h.yaw-base.yaw)>22); // 近6秒大角度转头占比（频繁张望）
+  const present=fracPred(1.5,h=>h.face)>=.5;          // 1.5秒内半数帧有脸=人在（单帧丢失不算离开）
+  // 动捕身体信号（约11Hz，取最近一帧）
+  poseCur=null;for(let i=WIN.length-1;i>=0;i--){if(WIN[i].pose){poseCur=WIN[i].pose;break;}}
+  if(fresh){
+    if(present){noFace=Math.max(0,noFace-.4*sp);faceLostT=0;}
+    else{noFace+=.2*sp;faceLostT+=.2*sp;}
+    // 手机计时独立于人脸：手机挡脸时计时照走
+    if(phoneSeen){phoneHold+=.2*sp;phoneGrace=0;}
+    else{phoneHold=Math.max(0,phoneHold-.4*sp);phoneGrace+=.2*sp;}
+    if(present){
+      // 低头写字时手部有小幅运动，不算"低头发呆"；只有低头且几乎不动才累积犯困
+      if(down&&mv<0.006&&!writing)downStill+=.2*sp;else downStill=0;
+      if(Math.abs(yawD)>16)yawHold+=.2*sp;else yawHold=Math.max(0,yawHold-.4*sp);
+    }else if(faceLostT>3){
+      // 连续 3 秒真看不到脸，才清姿态计时；转头/低头瞬间的丢帧不再把进度条清零
+      downStill=0;yawHold=0;
+    }
+    // 动捕：托腮 / 玩笔小动作 / 含胸驼背 / 趴桌，均需持续成立才计时
+    if(present&&poseCur&&poseCur.has){
+      if(poseCur.rc>.4)restHold+=.2*sp;else restHold=Math.max(0,restHold-.4*sp);
+      if(poseCur.fg>.3)fidgetHold+=.2*sp;else fidgetHold=Math.max(0,fidgetHold-.4*sp);
+      if(poseCur.sl>.45||poseCur.asym>.45)slouchHold+=.2*sp;else slouchHold=Math.max(0,slouchHold-.4*sp);
+      if(poseCur.sl>.65)poseDeskHold+=.2*sp;else poseDeskHold=Math.max(0,poseDeskHold-.4*sp);
+    }else{
+      restHold=Math.max(0,restHold-.6*sp);fidgetHold=Math.max(0,fidgetHold-.6*sp);
+      slouchHold=Math.max(0,slouchHold-.6*sp);poseDeskHold=Math.max(0,poseDeskHold-.6*sp);
+    }
+    if(phoneHold<=0.2)phoneSnap7=false;
+    moveEMA=moveEMA?moveEMA*.85+mv*.15:mv;
+    if(noiseLvl==="speech")_speakHold+=.2*sp;else _speakHold=Math.max(0,_speakHold-.2*sp);
+
+    // 手机出现满 7 秒：自动拍一张进证据相册（每段只拍一次，带时间水印）
+    if(phoneSeen&&phoneHold>=7&&!phoneSnap7){
+      phoneSnap7=true;
+      requestShot("phone");
+      log("手机出现满 7 秒，已自动抓拍","bad");
+    }
+  }
+
+  // 走神必须"成段成立"：持续转头 / 频繁转头 / 持续坐不住 / 大声吵闹 / 说话 / 托腮 / 玩笔 / 驼背
+  const lookAround=yawHold>=1.5||yawFrac>=.3;
+  const restless=moveFrac>=.35;
+  const bodyBad=restHold>=2||fidgetHold>=2.5||slouchHold>=2.5;   // 动捕：身体层面的走神
+  let r=null;
+  if(!fresh)r="?";
+  else if(!present&&!phoneRecent&&noFace>=cfg.awayT&&lastBri>30)r="away";
+  else if(phoneSeen&&((phoneHold>=cfg.redT&&down)||phoneHold>=cfg.hardT))r="phone";
+  else if(phoneSeen&&phoneHold>=cfg.yellowT)r="mild";
+  else if(phoneSeen)r="lookup";
+  else if(phoneHold>0)r=phoneHold>=cfg.yellowT?"mild":"lookup";
+  else if(present&&(blinkLong||yawn||downStill>=10||poseDeskHold>=8))r="sleepy";
+  else if(present&&(lookAround||restless||bodyBad||noiseLvl==="loud"||(cfg.talk&&_speakHold>=6)))r="mild";
+  // 专注：正常注视屏幕/直立/写字，且无任何走神信号；poseDeskHold<8 防止趴桌被算专注
+  else if(present&&(gazing||upright||writing)&&!lookAround&&!restless&&!bodyBad&&poseDeskHold<8)r="focus";
+  else r=state==="?"?"focus":state;   // 信号模棱两可时保持现状，绝不乱跳
+  raw=r;
+
+  if(cand!==r){cand=r;candT=now;}
+  let dw=DWELL[r]||1000;
+  if(r==="focus"&&state==="?")dw=1000;   // 刚开机进专注不用等，只有走神后回归才要连续保持4秒
+  if(now-candT>=dw/sp&&r!=="?"&&r!==state)enterState(r);
+
+  // 检测台未连接时在进度条上方醒目提示，避免用户以为进度条坏了
+  const warnEl=$("detWarn");
+  if(!fresh){
+    warnEl.style.display="block";
+    warnEl.innerHTML=!detReady
+      ? "⚠️ 检测台未连接（摄像头权限被拒/被占用）→ 点中间列「重启检测台」，允许摄像头后进度条才会动"
+      : "⚠️ 信号中断超过 1.5 秒 → 请正对摄像头坐好";
+  }else{warnEl.style.display="none";}
+
+  renderDebug({face,fresh,nr,nrD,pitch,pitchD,yawD,ear,mar,blink,jaw,mv,moveEMA,down,upright,writing,
+    blinkLong,yawn,downStill,phoneSeen,phoneHold,phoneRecent,noFace,yawHold,noiseLvl,dimLight:lastBri<50,
+    slouch:poseCur?Math.max(poseCur.sl,poseCur.asym):0,rest:restHold,fidget:fidgetHold,
+    fidgetRaw:poseCur?poseCur.fg:0,restRaw:poseCur?poseCur.rc:0});
+}
+
+let bellTimer=null;
+function beep(freq,dur,vol){
+  try{
+    const ac=actx||new (window.AudioContext||window.webkitAudioContext)();
+    if(ac.state==="suspended")ac.resume();
+    const o=ac.createOscillator(),g=ac.createGain();
+    o.frequency.value=freq;o.type="sine";g.gain.value=vol||.12;
+    o.connect(g);g.connect(ac.destination);o.start();
+    g.gain.exponentialRampToValueAtTime(.0001,ac.currentTime+(dur||.15));
+    o.stop(ac.currentTime+(dur||.15));
+  }catch(_){}
+}
+function say(t){if(!cfg.say)return;try{const u=new SpeechSynthesisUtterance(t);u.lang="zh-CN";u.rate=1.05;speechSynthesis.cancel();speechSynthesis.speak(u);}catch(_){}}
+
+/* ---------- 今日战报 ---------- */
+function genReport(){
+  const F=stats.focusSec/60,tot=F+(stats.phoneN*3)+(stats.sleepyN*2)+(stats.mildN*1.5);
+  let score=tot?Math.min(100,Math.round(F/tot*100)):100;
+  let grade=score>=85?"S":score>=70?"A":score>=55?"B":score>=35?"C":"D";
+  let beat=score>=85?"超越全校 93% 的同学":score>=70?"超越全校 78% 的同学":score>=55?"超过一半同学啦，继续加油":"下次专注时间再长一点，你一定可以！";
+  let line=score>=85?"灯塔之光，今日最亮！":score>=70?"专注习惯不错，继续保持":score>=55?"状态尚可，还有提升空间":"你今天走神比较多哦，明天加油";
+  $("repGrade").textContent=grade;$("repGrade").style.color=grade==="S"?COLORS.focus:grade==="A"?"#4da3ff":grade==="B"?COLORS.yellow:grade==="C"?"#cfe0ff":"#7e8aa6";
+  $("repLine").textContent=line;
+  $("repBeat").textContent="🏆 "+beat;
+  const repStats=[
+    {v:Math.round(F),l:"专注分"},{v:stats.phoneN,l:"被抓"},{v:stats.sleepyN,l:"犯困"},{v:stats.mildN,l:"分心"}
+  ];
+  $("repStats").innerHTML=repStats.map(x=>'<div><b>'+x.v+'</b><span>'+x.l+'</span></div>').join("");
+  $("reportOv").style.display="flex";
+  if(cfg.say){const u=new SpeechSynthesisUtterance("今日战报已生成，你获得了"+grade+"级评价");u.lang="zh-CN";u.rate=1.05;speechSynthesis.speak(u);}
+}
+$("reportBtn").onclick=genReport;
+$("repClose").onclick=()=>$("reportOv").style.display="none";
+function startBellLoop(){stopBellLoop();bellTimer=setInterval(()=>{beep(880,.16,.13);setTimeout(()=>beep(660,.2,.13),220);},5000);}
+function stopBellLoop(){if(bellTimer){clearInterval(bellTimer);bellTimer=null;}}
+
+function enterState(s){
+  const old=state;state=s;stateEnter=Date.now();
+  tlPush();renderTL();
+  const eff={focus:"breathe",lookup:"steady",mild:"blink",phone:"deepen",sleepy:"pulse",away:"breathe"};
+  const ring=$("ring");
+  ring.className=eff[s]||"breathe";
+  ring.style.borderColor=COLORS[s];
+  $("ringInner").textContent=EMOJI[s]||"❓";
+  $("stateName").style.color=COLORS[s];
+  $("stateName").textContent=NAMES[s];
+  $("stateCond").textContent=CONDS[s];
+  log("状态："+NAMES[old]+" → "+NAMES[s]);
+  stopBellLoop();
+  if(s==="mild"){beep(620,.13,.09);stats.mildN++;sayState("mild");}
+  if(s==="phone"){
+    stats.phoneN++;
+    sayState("phone");
+    if(cfg.bell)setTimeout(()=>{if(state==="phone")startBellLoop();},25000/SP());
+    requestShot("phone");
+    setTimeout(()=>{if(state==="phone")requestShot("phone");},8000/SP());
+  }
+  if(s==="sleepy"){stats.sleepyN++;beep(520,.25,.12);sayState("sleepy");requestShot("sleepy");}
+  if(s==="away"){stats.mildN++;sayState("away");}
+  if(s==="focus"){beep(740,.12,.08);sayState("focus");}
+  if(s==="lookup")sayState("lookup");
+  saveStats();renderStats();
+}
+
+/* ---------- 校准 ---------- */
+/* ---------- 校准（带倒计时覆盖层） ---------- */
+function runCalib(ms,onNum,onDone){
+  let n=0,sum={nr:0,pitch:0,yaw:0},nn=[],cnt=Math.round(ms/1000);
+  if(onNum)onNum(cnt);
+  const iv=setInterval(()=>{
+    const f=WIN[WIN.length-1];
+    if(f&&f.face){sum.nr+=f.nr;sum.pitch+=f.pitch;sum.yaw+=f.yaw;n++;}
+    nn.push(noiseDB);
+  },200);
+  const niv=setInterval(()=>{cnt--;if(onNum&&cnt>=0)onNum(cnt);},1000);
+  setTimeout(()=>{
+    clearInterval(iv);clearInterval(niv);
+    if(nn.length)noiseFloor=median(nn);
+    if(n>=Math.max(3,Math.round(ms/800))){
+      base={nr:sum.nr/n,pitch:sum.pitch/n,yaw:sum.yaw/n};
+      onDone(true);
+    }else onDone(false);
+  },ms+150);
+}
+function autoCalib(){
+  $("calibOv").style.display="flex";
+  runCalib(3000,(c)=>{$("calibNum").textContent=Math.max(0,c);},(ok)=>{
+    $("calibOv").style.display="none";
+    if(ok){$("stateCond").innerHTML="✅ 自动校准完成。低头写字、短暂拿手机都能正确区分。姿势变化大可在底部重新校准";log("自动校准完成 nr="+base.nr.toFixed(3),"ok");}
+    else{
+      // 校准失败兜底：用 WIN 里最近的 nr/pitch/yaw（pose fallback 可能已填充），否则用默认值
+      const recent=WIN.filter(w=>typeof w.nr==="number");
+      if(recent.length>=2){
+        base={nr:median(recent.map(w=>w.nr)),pitch:median(recent.map(w=>w.pitch||0)),yaw:median(recent.map(w=>w.yaw||0))};
+        $("stateCond").innerHTML="✅ 已用姿态数据近似校准（面部信号弱）。可点底部“重新校准”获得更准基线";
+        log("近似校准 nr="+base.nr.toFixed(3),"ok");
+      }else{
+        base={nr:0.28,pitch:0,yaw:0};
+        $("stateCond").innerHTML="✅ 已设默认基线。正对摄像头后点底部“重新校准”更准";
+        log("默认校准","ok");
+      }
+    }
+  });
+}
+$("calibBtn").onclick=()=>{
+  $("calibOv").style.display="flex";
+  runCalib(2000,(c)=>{$("calibNum").textContent=Math.max(0,c);},(ok)=>{
+    $("calibOv").style.display="none";
+    if(ok){$("stateCond2").textContent="✅ 校准完成";log("手动校准完成","ok");}
+    else{
+      const recent=WIN.filter(w=>typeof w.nr==="number");
+      if(recent.length>=2){
+        base={nr:median(recent.map(w=>w.nr)),pitch:median(recent.map(w=>w.pitch||0)),yaw:median(recent.map(w=>w.yaw||0))};
+        $("stateCond2").textContent="✅ 已用姿态数据近似校准";
+      }else{$("stateCond2").textContent="⚠️ 没看清你的脸，请正对摄像头再点一次";}
+    }
+  });
+};
+
+/* ---------- 主循环 ---------- */
+setInterval(()=>{
+  decide();
+  const now=Date.now();
+  if(state==="focus"&&now-lastSigT<1500){
+    const last=decide._last||now;
+    stats.focusSec+=(now-last)/1000;decide._last=now;
+  }else decide._last=now;
+  const sec=(now-stateEnter)/1000|0;
+  $("stateTimer").textContent=String(sec/60|0).padStart(2,"0")+":"+String(sec%60).padStart(2,"0");
+  // 连续专注 45 分钟：提醒休息
+  const FT=2700000/SP();
+  if(state==="focus"&&now-stateEnter>=FT&&now-restTipAt>=FT){
+    restTipAt=now;beep(660,.2,.1);
+    say("已经连续专注四十五分钟啦，起来活动五分钟，喝口水看看远处");
+    log("连续专注45分钟，提醒休息","ok");
+    $("stateCond").textContent="🌿 已专注45分钟，建议休息5分钟";
+  }
+},200);
+
+/* ---------- 右侧进度条 ---------- */
+const METER_GROUPS=[
+  ["头部姿势（相对校准基线）",["nr","pitch","yaw"]],
+  ["脸部表情（0 平静 → 1 强烈）",["blink","jaw"]],
+  ["行为计时（秒）",["phone","still","look"]],
+  ["AI全息动捕（33点骨架+42点手势+姿态分析）",["slouch","rest","fidget"]],
+  ["身体与环境",["move","noise","noface"]]
+];
+// 姿态类条一律按“偏离校准基线的绝对量”填充：坐直时条为空、偏离越大条越长（文本仍保留正负号）
+const METER_DEFS={
+  nr:{label:"鼻比下降Δ（低头↑）",range:[0,.10],fmt:v=>v.toFixed(3)},
+  pitch:{label:"俯仰角Δ（低头为正）",range:[0,30],fmt:v=>v.toFixed(1)+"°"},
+  yaw:{label:"左右转头|Δ|",range:[0,45],fmt:v=>v.toFixed(1)+"°"},
+  blink:{label:"闭眼程度",range:[0,1],fmt:v=>v.toFixed(2)},
+  jaw:{label:"张嘴 / 哈欠",range:[0,1],fmt:v=>v.toFixed(2)},
+  phone:{label:"手机持续",range:[0,cfg.hardT],fmt:v=>v.toFixed(1)+"s"},
+  still:{label:"趴桌不动",range:[0,15],fmt:v=>v.toFixed(1)+"s"},
+  look:{label:"左右张望",range:[0,6],fmt:v=>v.toFixed(1)+"s"},
+  move:{label:"身体晃动",range:[0,.02],fmt:v=>v.toFixed(4)},
+  noise:{label:"环境音量Δ",range:[0,30],fmt:v=>v.toFixed(0)+"dB"},
+  slouch:{label:"含胸驼背",range:[0,1],fmt:v=>Math.round(v*100)+"%"},
+  rest:{label:"手贴脸/托腮",range:[0,8],fmt:v=>v.toFixed(1)+"s"},
+  fidget:{label:"手部小动作",range:[0,1],fmt:v=>Math.round(v*100)+"%"},
+  noface:{label:"看不到人",range:[0,cfg.awayT],fmt:v=>v.toFixed(1)+"s"}
+};
+const lvl=(v,w,b)=>v>=b?"bad":v>=w?"warn":"ok";
+function buildMeters(){
+  const host=$("meterHost");host.innerHTML="";
+  METER_GROUPS.forEach(([title,ids])=>{
+    const t=document.createElement("div");t.className="groupt";t.textContent=title;host.appendChild(t);
+    ids.forEach(id=>{
+      const d=METER_DEFS[id];
+      const m=document.createElement("div");m.className="meter";
+      m.innerHTML='<div class="mTop"><span>'+d.label+'</span><span class="v" id="mv_'+id+'">--</span></div>'+
+        '<div class="mTrack"><div class="mFill" id="mf_'+id+'"></div><div id="mm_'+id+'" style="position:absolute;inset:0;pointer-events:none"></div></div>';
+      host.appendChild(m);
+    });
+  });
+}
+buildMeters();
+function setMeter(id,text,pct,level,marks){
+  const f=$("mf_"+id),v=$("mv_"+id),mm=$("mm_"+id);
+  if(!f)return;
+  v.textContent=text;
+  f.style.width=Math.max(0,Math.min(1,pct))*100+"%";
+  f.className="mFill"+(level==="bad"?" bad":level==="warn"?" warn":"");
+  v.style.color=level==="bad"?"var(--red)":level==="warn"?"var(--yellow)":"var(--green)";
+  mm.innerHTML=(marks||[]).map(mk=>'<div class="mMark'+(mk.bad?' bad':'')+'" style="left:'+(mk.p*100)+'%"></div>').join("");
+}
+function chip(id,on,color){
+  const el=$(id);if(!el)return;
+  el.classList.toggle("on",!!on);
+  if(on)el.style.background=color;else el.style.background="";
+}
+function renderDebug(x){
+  $("rawLine").innerHTML=
+    '原始 <b style="color:'+(COLORS[raw]||"#777")+'">'+(NAMES[raw]||raw)+'</b> · 信号 '+
+    sigRate+'Hz · '+(x.face?'<b style="color:var(--green)">人脸 ✓</b>':'<b style="color:var(--red)">人脸丢失 '+x.noFace.toFixed(1)+'s</b>')+
+    (x.dimLight?' · <b style="color:var(--yellow)">💡光线偏暗，建议开灯</b>':'');
+  chip("cpUp",x.upright&&x.face,COLORS.focus);
+  chip("cpWrite",x.writing,COLORS.blue);
+  chip("cpDown",x.down&&!x.writing,COLORS.yellow);
+  chip("cpBlink",x.blinkLong,COLORS.purple);
+  chip("cpYawn",x.yawn,COLORS.purple);
+  chip("cpPhone",x.phoneSeen,COLORS.red);
+
+  const pct=(id,v)=>{const r=METER_DEFS[id].range;return(v-r[0])/(r[1]-r[0]);};
+  const nrAbs=Math.abs(x.nrD),pdAbs=Math.abs(x.pitchD);
+  setMeter("nr",METER_DEFS.nr.fmt(x.nrD),pct("nr",nrAbs),lvl(nrAbs,.035,.06),[{p:pct("nr",.035)}]);
+  setMeter("pitch",METER_DEFS.pitch.fmt(x.pitchD),pct("pitch",pdAbs),
+    pdAbs>=12?"bad":pdAbs>=8?"warn":"ok",[{p:pct("pitch",8)}]);
+  const ya=Math.abs(x.yawD);
+  setMeter("yaw",METER_DEFS.yaw.fmt(ya),pct("yaw",ya),lvl(ya,22,30),[{p:pct("yaw",22)}]);
+  setMeter("blink",METER_DEFS.blink.fmt(x.blink),x.blink,lvl(x.blink,.5,.65),[{p:.65}]);
+  setMeter("jaw",METER_DEFS.jaw.fmt(x.jaw),x.jaw,lvl(x.jaw,.35,.55),[{p:.55}]);
+  setMeter("phone",METER_DEFS.phone.fmt(x.phoneHold)+(x.phoneSeen?" · 出现中":""),x.phoneHold/cfg.hardT,
+    lvl(x.phoneHold,cfg.yellowT,cfg.redT),
+    [{p:cfg.yellowT/cfg.hardT},{p:cfg.redT/cfg.hardT,bad:true},{p:7/cfg.hardT,bad:false}]);
+  setMeter("still",METER_DEFS.still.fmt(x.downStill),pct("still",x.downStill),lvl(x.downStill,6,10),[{p:pct("still",10)}]);
+  setMeter("look",METER_DEFS.look.fmt(x.yawHold),pct("look",x.yawHold),lvl(x.yawHold,2,3),[{p:.5}]);
+  setMeter("move",METER_DEFS.move.fmt(x.moveEMA),pct("move",x.moveEMA),lvl(x.moveEMA,.012,.02),[{p:pct("move",.012)}]);
+  const nd=noiseDB-noiseFloor;
+  if(!micOK){
+    setMeter("noise","🎤 点一下页面开启",0,"ok",[]);
+  }else{
+    setMeter("noise",METER_DEFS.noise.fmt(nd)+" "+(x.noiseLvl==="quiet"?"安静":x.noiseLvl==="speech"?"说话":"吵闹"),
+      pct("noise",Math.max(0,nd)),lvl(nd,10,18),[{p:pct("noise",10)}]);
+  }
+  setMeter("noface",METER_DEFS.noface.fmt(x.noFace),x.noFace/cfg.awayT,lvl(x.noFace,cfg.awayT*.6,cfg.awayT),[{p:1,bad:true}]);
+  setMeter("slouch",Math.round(x.slouch*100)+"%",x.slouch,lvl(x.slouch,.6,.8),[{p:.6},{p:.8,bad:true}]);
+  setMeter("rest",METER_DEFS.rest.fmt(x.rest)+(x.restRaw>.55?" · 贴脸中":""),x.rest/8,lvl(x.rest,3,5),[{p:3/8},{p:5/8,bad:true}]);
+  setMeter("fidget",Math.round((x.fidgetRaw||0)*100)+"%",x.fidgetRaw||0,lvl(x.fidgetRaw||0,.45,.7),[{p:.45},{p:.7,bad:true}]);
+  renderPhone(x);
+}
+
+/* ---------- 手机检测小窗 ---------- */
+const phCard=$("phoneCard"),phCv=$("phMini"),phx=phCv.getContext("2d");
+function renderPhone(x){
+  const ph=(cachedPhone&&(Date.now()-cachedPhoneT)<3000)?cachedPhone:null;
+  const W=phCv.width,H=phCv.height;
+  phx.clearRect(0,0,W,H);
+  phx.fillStyle="#05080f";phx.fillRect(0,0,W,H);
+  // 画摄像头低清画面（场景粒子边缘），让用户看到实时画面
+  if(cachedScene&&Date.now()-cachedSceneT<3000){
+    const camRatio=4/3, cvRatio=W/H;
+    let rw=W,rh=H,ox=0,oy=0;
+    if(cvRatio>camRatio){rh=H;rw=H*camRatio;ox=(W-rw)/2;}
+    else{rw=W;rh=W/camRatio;oy=(H-rh)/2;}
+    const pts=cachedScene;
+    for(let i=0;i<pts.length;i++){
+      const p=pts[i];
+      const px=ox+p[0]*rw, py=oy+p[1]*rh;
+      phx.fillStyle="rgba("+p[2]+","+p[3]+","+p[4]+",.8)";
+      phx.fillRect(px,py,2,2);
+    }
+  }
+  // 取景框四角
+  phx.strokeStyle="#22304d";phx.lineWidth=2;
+  [[10,10,1,1],[W-10,10,-1,1],[10,H-10,1,-1],[W-10,H-10,-1,-1]].forEach(c=>{
+    phx.beginPath();phx.moveTo(c[0]+12*c[2],c[1]);phx.lineTo(c[0],c[1]);phx.lineTo(c[0],c[1]+12*c[3]);phx.stroke();
+  });
+  if(ph&&ph.nb){
+    phCard.classList.add("on");
+    $("phState").textContent="🔴 发现手机";
+    $("phConf").textContent=(ph.p*100).toFixed(0)+"%";
+    $("phHold").textContent=x.phoneHold.toFixed(1)+"s";
+    const n=ph.nb;
+    phx.save();phx.translate(W,0);phx.scale(-1,1);
+    const px=n.x*W,py=n.y*H,pw=Math.max(2,n.w*W),ph2=Math.max(2,n.h*H);
+    phx.strokeStyle="#ff5470";phx.lineWidth=2.5;phx.shadowColor="#ff5470";phx.shadowBlur=8;
+    phx.strokeRect(px,py,pw,ph2);phx.restore();
+    phx.fillStyle="#ff5470";phx.font="bold 11px Consolas,monospace";
+    phx.fillText("PHONE "+(ph.p*100).toFixed(0)+"%",6,H-8);
+    const cx=1-(n.x+n.w/2),cy=n.y+n.h/2;
+    $("phPos").textContent=(cx<.33?"左":cx>.66?"右":"中")+"·"+(cy<.33?"上":cy>.66?"下":"中");
+  }else{
+    phCard.classList.remove("on");
+    $("phState").textContent="未发现";
+    $("phConf").textContent="--";
+    $("phHold").textContent=x.phoneHold.toFixed(1)+"s";
+    $("phPos").textContent="--";
+    phx.fillStyle="#3a4763";phx.font="12px Microsoft YaHei";phx.textAlign="center";
+    phx.fillText(cachedScene?"扫描中…":"等待画面",W/2,H/2);phx.textAlign="left";
+  }
+}
+
+/* ---------- 麦克风（带状态与重试；file:// 下权限偶发会静默失败） ---------- */
+let actx=null,micTries=0;
+async function initMic(){
+  if(micOK||micTries>=6)return;
+  micTries++;
+  try{
+    if(!actx)actx=new (window.AudioContext||window.webkitAudioContext)();
+    if(actx.state==="suspended"){try{await actx.resume();}catch(_){}}
+    const ms=await navigator.mediaDevices.getUserMedia(
+      {audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false},video:false});
+    const src=actx.createMediaStreamSource(ms),an=actx.createAnalyser();
+    an.fftSize=1024;src.connect(an);
+    const buf=new Uint8Array(an.fftSize);
+    micOK=true;noiseFloor=noiseDB=-55;
+    log("麦克风已开启，环境音量监测生效","ok");
+    // 先采集 2 秒环境底噪作为基准，避免"没说话却显示吵闹"
+    let _floorBuf=[];
+    const _floorIv=setInterval(()=>{
+      an.getByteTimeDomainData(buf);
+      let s=0;for(let i=0;i<buf.length;i++){const v=(buf[i]-128)/128;s+=v*v;}
+      const rms=Math.sqrt(s/buf.length);
+      const v=20*Math.log10(rms+1e-7)+8;
+      _floorBuf.push(v);
+      noiseDB=noiseDB===-55?v:noiseDB*.7+v*.3;
+    },100);
+    setTimeout(()=>{
+      clearInterval(_floorIv);
+      if(_floorBuf.length){noiseFloor=median(_floorBuf);log("环境底噪校准："+noiseFloor.toFixed(1)+"dB","ok");}
+      // 校准后正式进入实时监测
+      setInterval(()=>{
+        an.getByteTimeDomainData(buf);
+        let s=0;for(let i=0;i<buf.length;i++){const v=(buf[i]-128)/128;s+=v*v;}
+        const rms=Math.sqrt(s/buf.length);
+        const v=20*Math.log10(rms+1e-7)+8;
+        noiseDB=noiseDB===-55?v:noiseDB*.7+v*.3;
+        // 底噪缓慢跟随：如果环境持续变安静/嘈杂，基准也跟着微调（每 5 秒最多动 0.5dB）
+        if(Math.abs(noiseDB-noiseFloor)>6)noiseFloor+=(noiseDB-noiseFloor)*0.002;
+      },250);
+    },2000);
+  }catch(e){
+    micOK=false;noiseDB=-55;
+    setTimeout(initMic,5000);   // 权限弹窗被忽略/系统麦克风占用时，5秒后再试
+  }
+}
+initMic();
+// 用户点页面任意位置时补一次（浏览器策略要求用户手势后才能稳定使用音频设备）
+document.addEventListener("pointerdown",()=>{if(!micOK)initMic();},{once:false});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&!micOK)initMic();});
+
+/* ---------- 抓拍 + 水印 + 相册（IndexedDB） ---------- */
+let snapSeq=0;
+function requestShot(state){
+  if(!detReady)return;
+  snapSeq++;pendingShot={state,tm:Date.now()};
+  try{det.contentWindow.postMessage({type:"snap",id:snapSeq},"*");}catch(_){}
+}
+function fmtTime(t){
+  const d=new Date(t),p=n=>String(n).padStart(2,"0");
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds());
+}
+function stampPhoto(dataURL,tm){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=()=>{
+      const c=document.createElement("canvas");
+      c.width=img.width;c.height=img.height+34;
+      const g=c.getContext("2d");
+      g.drawImage(img,0,0);
+      g.fillStyle="rgba(5,8,15,.82)";g.fillRect(0,img.height,c.width,34);
+      g.fillStyle="#dbe3f4";g.font="bold 20px Microsoft YaHei,Consolas";g.textBaseline="middle";
+      g.fillText("姿态灯塔 · "+fmtTime(tm),12,img.height+17);
+      resolve(c.toDataURL("image/jpeg",.6));
+    };
+    img.onerror=reject;img.src=dataURL;
+  });
+}
+const MAX_SHOTS=30,DB_NAME="lighthouse",STORE="shots";
+let db=null;
+function openDB(){
+  return new Promise((res,rej)=>{
+    const rq=indexedDB.open(DB_NAME,1);
+    rq.onupgradeneeded=()=>rq.result.createObjectStore(STORE,{keyPath:"id",autoIncrement:true});
+    rq.onsuccess=()=>{db=rq.result;res();};rq.onerror=()=>rej(rq.error);
+  });
+}
+async function addShot(state,url,t){
+  if(!db)return;
+  try{
+    await new Promise((ok,fail)=>{
+      const tx=db.transaction(STORE,"readwrite");
+      tx.objectStore(STORE).add({state,url,t:t||Date.now()});
+      tx.oncomplete=ok;tx.onerror=()=>fail(tx.error);
+    });
+    const all=await new Promise((ok,fail)=>{const r=db.transaction(STORE).objectStore(STORE).getAll();r.onsuccess=()=>ok(r.result);r.onerror=()=>fail(r.error);});
+    if(all.length>MAX_SHOTS){
+      all.sort((a,b)=>a.id-b.id);
+      const tx=db.transaction(STORE,"readwrite");
+      for(let i=0;i<all.length-MAX_SHOTS;i++)tx.objectStore(STORE).delete(all[i].id);
+    }
+    renderShots();log("证据照片已保存："+NAMES[state],"ok");
+  }catch(e){log("相册写入失败："+e.message,"warn");}
+}
+async function renderShots(){
+  const grid=$("shotGrid");
+  if(!db){grid.innerHTML='<span class="note">相册未初始化</span>';return;}
+  let all=[];
+  try{all=await new Promise((ok,fail)=>{const r=db.transaction(STORE).objectStore(STORE).getAll();r.onsuccess=()=>ok(r.result);r.onerror=()=>fail(r.error);});}catch(e){return;}
+  if(!all.length){grid.innerHTML='<span class="note">还没有证据照片。手机出现满 7 秒或犯困时会自动拍。</span>';return;}
+  all.sort((a,b)=>b.id-a.id);
+  grid.innerHTML=all.map(s=>{
+    const d=new Date(s.t),p=n=>String(n).padStart(2,"0");
+    const tm=p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds());
+    return '<div class="shot"><img src="'+s.url+'" onclick="document.getElementById(\'modalImg\').src=this.src;document.getElementById(\'modal\').style.display=\'flex\'">'+
+      '<span style="color:'+COLORS[s.state]+'">'+NAMES[s.state]+' · '+tm+'</span></div>';
+  }).join("");
+}
+$("clearShots").onclick=async()=>{
+  if(!db||!confirm("确定清空全部证据照片？"))return;
+  await new Promise((ok)=>{const tx=db.transaction(STORE,"readwrite");tx.objectStore(STORE).clear();tx.oncomplete=ok;});
+  renderShots();
+};
+openDB().then(renderShots).catch(()=>{});
+
+/* ---------- 统计（localStorage，按天） ---------- */
+const today=()=>new Date().toISOString().slice(0,10);
+let stats=(()=>{try{const s=JSON.parse(localStorage.getItem("zt_stats_v6")||"null");if(s&&s.day===today())return s;}catch(_){}return{day:today(),focusSec:0,phoneN:0,sleepyN:0,mildN:0,tl:[]};})();
+
+/* ---------- 今日状态时间轴 ---------- */
+function tlPush(){
+  stats.tl=stats.tl||[];
+  const now=Date.now(),tl=stats.tl;
+  const s=state;
+  if(tl.length&&tl[tl.length-1].s===s)return;
+  if(tl.length&&now-tl[tl.length-1].t<8000){tl[tl.length-1].s=s;tl[tl.length-1].t=now;return;}
+  tl.push({t:now,s});
+  if(tl.length>600)tl.splice(0,tl.length-600);
+}
+function renderTL(){
+  const cv=$("tlCv");if(!cv)return;
+  const g=cv.getContext("2d"),W=cv.width,H=cv.height;
+  g.clearRect(0,0,W,H);g.fillStyle="#0b1322";g.fillRect(0,0,W,H);
+  const d0=new Date();d0.setHours(d0.getHours()<6?0:6,0,0,0);
+  const t0=d0.getTime(),t1=t0+18*3600*1000,now=Date.now();
+  const tl=stats.tl||[];
+  for(let i=0;i<tl.length;i++){
+    const a=Math.max(tl[i].t,t0),b=Math.min(i+1<tl.length?tl[i+1].t:now,t1);
+    if(b<=a)continue;
+    g.fillStyle=COLORS[tl[i].s]||"#7e8aa6";
+    g.fillRect((a-t0)/(t1-t0)*W,3,Math.max(1,(b-a)/(t1-t0)*W),H-13);
+  }
+  g.fillStyle="#2a3a5c";g.font="9px Consolas,monospace";g.textBaseline="alphabetic";
+  for(let h=d0.getHours();h<=24;h+=3){
+    const tt=new Date(d0);tt.setHours(h===24?23:h,h===24?59:0,0,0);
+    const x=(tt.getTime()-t0)/(t1-t0)*W;
+    if(x<0||x>W-12)continue;
+    g.fillRect(x,0,1,3);
+    g.fillText(String(h),x+2,H-2);
+  }
+}
+setInterval(()=>{tlPush();renderTL();},30000);
+function saveStats(){localStorage.setItem("zt_stats_v6",JSON.stringify(stats));}
+function renderStats(){
+  $("statFocus").textContent=(stats.focusSec/60|0);
+  $("statPhone").textContent=stats.phoneN;
+  $("statSleepy").textContent=stats.sleepyN;
+  $("statMild").textContent=stats.mildN;
+}
+renderStats();saveStats();tlPush();renderTL();
+setInterval(saveStats,8000);
+
+/* ---------- 日志 / tabs / 设置 ---------- */
+const logs=[];
+function log(msg,level){
+  const d=new Date(),p=n=>String(n).padStart(2,"0");
+  const tm=p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds());
+  logs.unshift({tm,msg,level:level||""});
+  if(logs.length>120)logs.pop();
+  const box=$("logList");
+  if(box)box.innerHTML=logs.map(l=>'<div class="logrow '+l.level+'">'+l.tm+' '+l.msg+'</div>').join("");
+}
+document.querySelectorAll(".tab").forEach(t=>{
+  t.onclick=()=>{
+    document.querySelectorAll(".tab").forEach(x=>x.classList.remove("on"));
+    document.querySelectorAll(".pane").forEach(x=>x.classList.remove("on"));
+    t.classList.add("on");$(t.dataset.p).classList.add("on");
+  };
+});
+$("swSay").onchange=e=>{cfg.say=e.target.checked;};
+$("swBell").onchange=e=>{cfg.bell=e.target.checked;if(!cfg.bell)stopBellLoop();};
+$("swDemo").onchange=e=>{
+  cfg.demo=e.target.checked;
+  $("demoTag").style.display=cfg.demo?"":"none";
+  log(cfg.demo?"⚡ 演示加速 ×5 已开启（所有计时快5倍，手机1.4秒即抓拍）":"演示加速已关闭","warn");
+  if(cfg.demo)say("演示模式已开启");
+};
+
+/* ---------- 开机自启 bat ---------- */
+$("startupBtn").onclick=()=>{
+  const url=location.href;
+  const chrome="C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+  const bat='@echo off\r\nchcp 65001 >nul\r\n'+
+    'if exist "'+chrome+'" ("'+chrome+'" --app="'+url+'") else (start msedge --app="'+url+'")\r\n';
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([bat],{type:"application/bat"}));
+  a.download="开机自启.bat";a.click();
+  $("startupTip").textContent="已下载：按 Win+R 输入 shell:startup，把它拖进打开的文件夹即可";
+};
+
+/* ================= 数字人镜像：33关节3D神经链 Avatar ================= */
+let rawPose=null,rawHands=[],avP=null,avH=[],avLastT=0,avN=0;
+const POSE_LINKS=[[0,1],[1,2],[2,3],[3,7],[0,4],[4,5],[5,6],[6,8],[9,10],[11,12],
+  [11,13],[13,15],[15,17],[15,19],[15,21],[17,19],[12,14],[14,16],[16,18],[16,20],
+  [16,22],[18,20],[11,23],[12,24],[23,24],[23,25],[24,26],[25,27],[26,28],
+  [27,29],[28,30],[29,31],[30,32],[27,31],[28,32]];
+const HAND_LINKS=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],
+  [11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+const FACE_RING=[0,1,2,3,7,6,5,4,0,9,10];   // 头盔式头部轮廓
+// 待机姿态模板（归一化人形）
+const POSE_T=(()=>{
+  const t=[[.5,.10],[.5,.09],[.51,.08],[.52,.08],[.49,.08],[.48,.08],[.47,.08],[.53,.075],[.465,.075],[.49,.095],[.51,.095],
+    [.445,.22],[.555,.22],[.41,.36],[.59,.36],[.395,.49],[.605,.49],[.39,.52],[.61,.52],[.395,.46],[.605,.46],[.39,.55],[.61,.55],
+    [.47,.55],[.53,.55],[.465,.72],[.535,.72],[.47,.86],[.53,.86],[.475,.96],[.525,.96],[.48,.99],[.52,.99]];
+  return t.map(p=>({x:p[0],y:p[1],z:0,v:1}));
+})();
+const avCv=$("avCv"),ax=avCv.getContext("2d");
+let avDpr=1;
+function avResize(){
+  const r=avCv.getBoundingClientRect();
+  avDpr=Math.min(2,window.devicePixelRatio||1);
+  avCv.width=r.width*avDpr;avCv.height=r.height*avDpr;
+}
+window.addEventListener("resize",avResize);
+setTimeout(avResize,300);
+
+function lerpP(dst,src,a){
+  if(!dst||dst.length!==src.length)return src.map(p=>({x:p[0],y:p[1],z:p[2],v:p[3]===undefined?1:p[3]}));
+  for(let i=0;i<src.length;i++){
+    dst[i].x+=(src[i][0]-dst[i].x)*a;dst[i].y+=(src[i][1]-dst[i].y)*a;
+    dst[i].z+=(src[i][2]-dst[i].z)*a;dst[i].v=src[i][3]===undefined?1:src[i][3];
+  }
+  return dst;
+}
+let avFpsN=0,avFpsT=Date.now(),avFpsShow=0;
+function avTick(){
+  requestAnimationFrame(avTick);
+  const now=Date.now();
+  const alive=rawPose&&now-avLastT<1500;
+  if(rawPose)avP=lerpP(avP,rawPose,.38);
+  if(rawHands&&rawHands.length){
+    if(avH.length!==rawHands.length)avH=rawHands.map(h=>h.map(p=>({x:p[0],y:p[1],z:p[2]})));
+    rawHands.forEach((h,hi)=>{for(let i=0;i<h.length;i++){
+      if(!avH[hi][i])avH[hi][i]={x:h[i][0],y:h[i][1],z:h[i][2]};
+      avH[hi][i].x+=(h[i][0]-avH[hi][i].x)*.4;avH[hi][i].y+=(h[i][1]-avH[hi][i].y)*.4;avH[hi][i].z+=(h[i][2]-avH[hi][i].z)*.4;
+    }});
+  }
+  avFpsN++;
+  if(now-avFpsT>1000){avFpsShow=avFpsN*1000/(now-avFpsT);avFpsN=0;avFpsT=now;}
+  drawAvatar(alive,now);
+}
+requestAnimationFrame(avTick);
+
+function drawAvatar(alive,now){
+  const W=avCv.width,H=avCv.height;
+  ax.clearRect(0,0,W,H);
+  // 背景网格
+  ax.strokeStyle="rgba(77,163,255,.05)";ax.lineWidth=1;
+  for(let x=0;x<W;x+=46*avDpr){ax.beginPath();ax.moveTo(x,0);ax.lineTo(x,H);ax.stroke();}
+  for(let y=0;y<H;y+=46*avDpr){ax.beginPath();ax.moveTo(0,y);ax.lineTo(W,y);ax.stroke();}
+  // ===== 真实场景粒子化重建 =====
+  // 摄像头拍到什么，这里就用粒子模拟什么（位置一一对应）
+  if(cachedScene&&now-cachedSceneT<3000){
+    const pts=cachedScene;
+    // 保持摄像头 4:3 比例居中映射
+    const camRatio=4/3, cvRatio=W/H;
+    let rw=W, rh=H, ox=0, oy=0;
+    if(cvRatio>camRatio){rh=H;rw=H*camRatio;ox=(W-rw)/2;}
+    else{rw=W;rh=W/camRatio;oy=(H-rh)/2;}
+    const pr=1.3*avDpr;
+    for(let i=0;i<pts.length;i++){
+      const p=pts[i];
+      const px=ox+p[0]*rw, py=oy+p[1]*rh;
+      const r=p[2],g=p[3],b=p[4];
+      // 全息边缘粒子，无辉光（避免花屏）
+      ax.fillStyle="rgba("+r+","+g+","+b+",.9)";
+      ax.beginPath();ax.arc(px,py,pr,0,7);ax.fill();
+    }
+    // 场景边框（全息取景框）
+    ax.strokeStyle=alive?"rgba(0,234,255,.25)":"rgba(77,163,255,.2)";
+    ax.lineWidth=1;ax.strokeRect(ox,oy,rw,rh);
+  }
+  // 雷达地面同心圆（数字人脚下全息光环）
+  const cx=W*.5,cy=H*.76;
+  for(let r=1;r<=4;r++){
+    const rad=60*r*avDpr;
+    const alpha=alive?.06:.04;
+    ax.strokeStyle=alive?"rgba(46,230,168,"+alpha+")":"rgba(77,163,255,"+alpha+")";
+    ax.lineWidth=1;ax.beginPath();ax.ellipse(cx,cy,rad,rad*.32,0,0,7);ax.stroke();
+  }
+  // 扫描线
+  const scan=((now*.06)%H);
+  const g=ax.createLinearGradient(0,scan-40,0,scan+40);
+  g.addColorStop(0,"rgba(46,230,168,0)");g.addColorStop(.5,"rgba(46,230,168,.10)");g.addColorStop(1,"rgba(46,230,168,0)");
+  ax.fillStyle=g;ax.fillRect(0,scan-40,W,80);
+  // 能量光环（待机呼吸 / 实时脉动）
+  const ringR=alive?(110+Math.sin(now*.004)*6):(100+Math.sin(now*.002)*10);
+  const ringCol=alive?"46,230,168":"77,163,255";
+  const rg=ax.createRadialGradient(cx,H*.4,ringR*.4,cx,H*.4,ringR*avDpr);
+  rg.addColorStop(0,"rgba("+ringCol+",0)");rg.addColorStop(.7,"rgba("+ringCol+",0)");
+  rg.addColorStop(.92,"rgba("+ringCol+","+(alive?.22:.14)+")");rg.addColorStop(1,"rgba("+ringCol+",0)");
+  ax.fillStyle=rg;ax.beginPath();ax.arc(cx,H*.4,ringR*avDpr,0,7);ax.fill();
+  // 垂直全息扫描条纹（阿凡达式全息投影特征）
+  for(let y=0;y<H;y+=3*avDpr){
+    const s=Math.sin((y+now*.08)*.02);
+    if(s>.3){ax.fillStyle="rgba(100,220,255,"+(.02*s)+")";ax.fillRect(0,y,W,1.2*avDpr);}
+  }
+  // 飘散粒子（全息尘埃）
+  const baseCol=alive?"46,230,168":"77,163,255";
+  for(let i=0;i<18;i++){
+    const px=(Math.sin(now*.0008+i*1.7)*.5+.5)*W;
+    const py=((now*.02+i*37)%H);
+    const ps=(.5+Math.sin(now*.003+i)*.5)*2.2*avDpr;
+    ax.fillStyle="rgba("+baseCol+","+(.2+Math.sin(now*.004+i)*.2)+")";
+    ax.beginPath();ax.arc(px,py,ps,0,7);ax.fill();
+  }
+
+  let pts;
+  if(alive&&avP){
+    // 场景映射区域（与场景粒子一致，4:3 居中）
+    const camRatio=4/3, cvRatio=W/H;
+    let rw=W, rh=H, ox=0, oy=0;
+    if(cvRatio>camRatio){rh=H;rw=H*camRatio;ox=(W-rw)/2;}
+    else{rw=W;rh=W/camRatio;oy=(H-rh)/2;}
+    // 躯干长度归一化 + 镜像，以鼻子为锚点与场景位置对齐
+    const shM={x:(avP[11].x+avP[12].x)/2,y:(avP[11].y+avP[12].y)/2};
+    const hpM={x:(avP[23].x+avP[24].x)/2,y:(avP[23].y+avP[24].y)/2};
+    const torso=Math.max(.08,Math.hypot(shM.x-hpM.x,shM.y-hpM.y));
+    const unit=Math.min(H*1.3,Math.max(H*.22,H*.5/torso));
+    // 鼻子在场景里的位置（锚点，镜像）
+    const nose=avP[0]||shM;
+    const noseX=ox+(1-nose.x)*rw, noseY=oy+nose.y*rh;
+    // 各点相对鼻子的偏移 * unit（镜像 x）
+    pts=avP.map(p=>{
+      const dx=(nose.x-p.x)*unit;  // 镜像
+      const dy=(p.y-nose.y)*unit;
+      return{X:noseX+dx, Y:noseY+dy, Z:p.z, V:p.v};
+    });
+    drawBody(pts,true,now);
+    avH.forEach(h=>{
+      const hp=h.map(p=>{
+        const dx=(nose.x-p.x)*unit;
+        const dy=(p.y-nose.y)*unit;
+        return{X:noseX+dx, Y:noseY+dy, Z:p.z};
+      });
+      drawHand(hp);
+    });
+    // 虚拟手机：检测到手机时在场景对应位置画一个全息手机
+    if(cachedPhone&&Date.now()-cachedPhoneT<2000){
+      const nb=cachedPhone.nb||cachedPhone;
+      const px=ox+(1-nb.x)*rw, py=oy+nb.y*rh;
+      const pw=nb.w*rw*.6, ph=nb.h*rh*.6;
+      // 手机辉光
+      ax.fillStyle="rgba(255,80,80,.15)";ax.shadowColor="#ff5050";ax.shadowBlur=20;
+      ax.fillRect(px-pw/2,py-ph/2,pw,ph);
+      // 手机边框
+      ax.strokeStyle="#ff6464";ax.lineWidth=2*avDpr;
+      ax.strokeRect(px-pw/2,py-ph/2,pw,ph);
+      ax.shadowBlur=0;
+      // 手机屏幕
+      ax.fillStyle="rgba(100,180,255,.2)";
+      ax.fillRect(px-pw/2+3*avDpr,py-ph/2+3*avDpr,pw-6*avDpr,ph-6*avDpr);
+      // 手机标签
+      ax.fillStyle="#ff6464";ax.font=10*avDpr+"px monospace";
+      ax.fillText("📱 PHONE",px-pw/2,py-ph/2-5*avDpr);
+    }
+    $("avBadge").textContent="🟢 神经链已连接 · 实时镜像中";
+    $("avBadge").style.color="var(--green)";$("avBadge").style.borderColor="#1d7a5b";
+    $("avJoints").textContent=33+avH.length*21;
+    $("avZ").textContent=((avP[0].z+avP[23].z)/2).toFixed(2);
+  }else{
+    const breath=1+Math.sin(now*.002)*.012;
+    // 待机模板放大居中：x 从 0.39-0.61 拉伸到约 28%-72%，让数字人占满画面主体
+    pts=POSE_T.map(p=>({X:W*.5+(p.x-0.5)*W*1.9, Y:H*.04+p.y*H*.88*breath, Z:0, V:1}));
+    drawBody(pts,false,now);
+    $("avBadge").textContent="🟡 待机中 · 启动检测台后实时镜像你的动作";
+    $("avBadge").style.color="var(--yellow)";$("avBadge").style.borderColor="#7a6a1d";
+    $("avJoints").textContent=0;$("avZ").textContent="0.00";
+  }
+  $("avFps").textContent=alive?avFpsShow.toFixed(0):"0";
+}
+function depthColor(z,active){
+  if(!active)return"#2a3a5c";
+  const d=Math.max(0,Math.min(1,(z+.1)/.45));   // 近(d小)=亮青，远=蓝紫
+  const r=Math.round(46+d*110),gg=Math.round(230-d*90),b=Math.round(168+d*80);
+  return"rgb("+r+","+gg+","+b+")";
+}
+function drawBody(pts,active,now){
+  // 收集所有光点：骨骼密集点 + 躯干填充点 + 头部光点
+  const dots=[];
+  // 1) 骨骼段密集点：每段 26 个发光粒子（强制绘制，V 只影响透明度）
+  for(let i=0;i<POSE_LINKS.length;i++){
+    const[a,b]=POSE_LINKS[i],A=pts[a],B=pts[b];if(!A||!B)continue;
+    const vis=active?Math.min(A.V==null?1:A.V,B.V==null?1:B.V):1;
+    const len=Math.hypot(B.X-A.X,B.Y-A.Y);
+    const N=Math.max(14,Math.round(len/(2.2*avDpr)));
+    for(let k=0;k<=N;k++){
+      const t=k/N;
+      const x=A.X+(B.X-A.X)*t, y=A.Y+(B.Y-A.Y)*t, z=A.Z+(B.Z-A.Z)*t;
+      dots.push({x,y,z,vis,kind:"bone",seed:i*31+k*7});
+    }
+  }
+  // 2) 躯干填充点：肩-髋四边形内 60 个光点（让身体"实"起来）
+  if(pts[11]&&pts[12]&&pts[23]&&pts[24]){
+    const sL=pts[11],sR=pts[12],hL=pts[23],hR=pts[24];
+    const visT=active?Math.min(sL.V==null?1:sL.V,sR.V==null?1:sR.V,hL.V==null?1:hL.V,hR.V==null?1:hR.V):1;
+    const TD=60;
+    for(let k=0;k<TD;k++){
+      const u=((k*7+now*.0003)%1), v=((k*13+now*.0002)%1);
+      const topX=sL.X+(sR.X-sL.X)*u, topY=sL.Y+(sR.Y-sL.Y)*u;
+      const botX=hL.X+(hR.X-hL.X)*u, botY=hL.Y+(hR.Y-hL.Y)*u;
+      const x=topX+(botX-topX)*v + Math.sin(k*1.7+now*.002)*3*avDpr;
+      const y=topY+(botY-topY)*v + Math.cos(k*2.3+now*.0015)*3*avDpr;
+      const z=(sL.Z+sR.Z+hL.Z+hR.Z)/4;
+      dots.push({x,y,z,vis:visT,kind:"torso",seed:k*11});
+    }
+  }
+  // 3) 头部光球：鼻(0)为中心，强制绘制（不管 V 值），确保脑袋一定看得见
+  if(pts[0]){
+    const nose=pts[0];
+    const earL=pts[7]||pts[3]||{X:nose.X-15*avDpr,Y:nose.Y};
+    const earR=pts[8]||pts[6]||{X:nose.X+15*avDpr,Y:nose.Y};
+    const headR=Math.max(22*avDpr, Math.hypot((earL.X-earR.X)/2,(earL.Y-earR.Y)/2)*1.15);
+    const visH=active?(nose.V==null?1:nose.V):1;
+    // 头部外圈辉光
+    const hg=ax.createRadialGradient(nose.X,nose.Y,0,nose.X,nose.Y,headR*1.8);
+    hg.addColorStop(0,active?"rgba(120,230,255,.4)":"rgba(80,120,180,.22)");
+    hg.addColorStop(.5,active?"rgba(46,230,168,.22)":"rgba(60,90,140,.14)");
+    hg.addColorStop(1,"rgba(0,0,0,0)");
+    ax.globalAlpha=active?(.55+.45*visH):.65;
+    ax.fillStyle=hg;ax.beginPath();ax.arc(nose.X,nose.Y,headR*1.8,0,7);ax.fill();
+    // 头部轮廓环（双层）
+    ax.strokeStyle=active?"rgba(120,230,255,.75)":"rgba(100,140,200,.55)";
+    ax.lineWidth=1.6*avDpr;ax.shadowColor="#5ce0ff";ax.shadowBlur=active?14:0;
+    ax.beginPath();ax.arc(nose.X,nose.Y,headR,0,7);ax.stroke();
+    ax.strokeStyle=active?"rgba(180,255,235,.4)":"rgba(140,180,220,.3)";
+    ax.lineWidth=.8*avDpr;
+    ax.beginPath();ax.arc(nose.X,nose.Y,headR*1.15,0,7);ax.stroke();
+    // 头部内部密集光点（50个）
+    for(let k=0;k<50;k++){
+      const ang=(k/50)*Math.PI*2 + now*.0008;
+      const rr=headR*(.15+.8*((k*17%100)/100));
+      const x=nose.X+Math.cos(ang)*rr, y=nose.Y+Math.sin(ang)*rr*.95;
+      dots.push({x,y,z:nose.Z,vis:visH,kind:"head",seed:k*3+5});
+    }
+    ax.shadowBlur=0;
+  }
+  ax.globalAlpha=1;
+  // 4) 绘制所有光点：三层（辉光→彩色→高亮白芯）+ 脉动
+  const t=now*.003;
+  for(const d of dots){
+    const vis=active?d.vis:1;
+    const pulse=.55+.45*Math.sin(t+d.seed*.13);
+    const size=(d.kind==="head"?2:d.kind==="torso"?1.6:1.4)*avDpr*pulse;
+    const col=active?depthColor(d.z,true):"#2a3a5c";
+    ax.globalAlpha=active?(.3+.7*vis):.6;
+    // 辉光
+    ax.fillStyle=col;ax.shadowColor=col;ax.shadowBlur=active?9:0;
+    ax.beginPath();ax.arc(d.x,d.y,size*2.4,0,7);ax.fill();
+    // 彩色芯
+    ax.fillStyle=active?"rgba(180,255,235,.92)":"#3a4f78";ax.shadowBlur=0;
+    ax.beginPath();ax.arc(d.x,d.y,size*.95,0,7);ax.fill();
+    // 高亮白芯（反光点，脉动峰值时出现）
+    if(pulse>.72){
+      ax.fillStyle="#fff";
+      ax.beginPath();ax.arc(d.x,d.y,size*.42,0,7);ax.fill();
+    }
+  }
+  ax.globalAlpha=1;ax.shadowBlur=0;
+  // 5) 关节连接球 + 高科技十字光标：33 个关键点（强制绘制）
+  for(let i=0;i<pts.length;i++){
+    const p=pts[i];if(!p)continue;
+    const vis=active?(p.V==null?1:p.V):1;
+    const isHead=i<=10;
+    const r=(isHead?3.6:2.8)*avDpr;
+    const col=active?depthColor(p.Z,true):"#4da3ff";
+    ax.globalAlpha=active?(.6+.4*vis):.8;
+    // 关节连接球（大辉光球，让骨骼端点衔接顺滑）
+    const jg=ax.createRadialGradient(p.X,p.Y,0,p.X,p.Y,r*2.5);
+    jg.addColorStop(0,active?"rgba(255,255,255,.9)":"rgba(159,208,255,.7)");
+    jg.addColorStop(.35,col);jg.addColorStop(1,"rgba(0,0,0,0)");
+    ax.fillStyle=jg;ax.shadowColor=col;ax.shadowBlur=active?14:0;
+    ax.beginPath();ax.arc(p.X,p.Y,r*2.5,0,7);ax.fill();
+    ax.shadowBlur=0;
+    // 十字光标
+    ax.strokeStyle=active?"rgba(220,255,245,.9)":"rgba(159,208,255,.8)";ax.lineWidth=1.1*avDpr;
+    ax.beginPath();
+    ax.moveTo(p.X-r*1.8,p.Y);ax.lineTo(p.X+r*1.8,p.Y);
+    ax.moveTo(p.X,p.Y-r*1.8);ax.lineTo(p.X,p.Y+r*1.8);
+    ax.stroke();
+    // 菱形框
+    ax.strokeStyle=col;ax.lineWidth=1*avDpr;
+    ax.beginPath();
+    ax.moveTo(p.X,p.Y-r);ax.lineTo(p.X+r,p.Y);ax.lineTo(p.X,p.Y+r);ax.lineTo(p.X-r,p.Y);ax.closePath();
+    ax.stroke();
+    // 中心白点
+    ax.fillStyle="#fff";
+    ax.beginPath();ax.arc(p.X,p.Y,1.1*avDpr,0,7);ax.fill();
+  }
+  ax.globalAlpha=1;ax.shadowBlur=0;
+  // 6) 胸口能量核心
+  if(active&&pts[11]&&pts[12]&&pts[23]&&pts[24]){
+    const hx=(pts[11].X+pts[12].X)/2,hy=(pts[11].Y+pts[12].Y)/2;
+    const lx=(pts[23].X+pts[24].X)/2,ly=(pts[23].Y+pts[24].Y)/2;
+    const cx=(hx+lx)/2,cy=(hy+ly)/2;
+    const pulse=1+.35*Math.sin(now*.006);
+    const crg=ax.createRadialGradient(cx,cy,0,cx,cy,20*avDpr*pulse);
+    crg.addColorStop(0,"rgba(255,255,255,.95)");crg.addColorStop(.3,"rgba(46,230,168,.8)");
+    crg.addColorStop(.7,"rgba(46,230,168,.2)");crg.addColorStop(1,"rgba(46,230,168,0)");
+    ax.fillStyle=crg;ax.beginPath();ax.arc(cx,cy,20*avDpr*pulse,0,7);ax.fill();
+  }
+}
+function drawHand(hp){
+  // 手部骨骼密集光点
+  for(const[a,b]of HAND_LINKS){
+    const A=hp[a],B=hp[b];if(!A||!B)continue;
+    const len=Math.hypot(B.X-A.X,B.Y-A.Y);
+    const N=Math.max(4,Math.round(len/(2*avDpr)));
+    for(let k=0;k<=N;k++){
+      const t=k/N;
+      const x=A.X+(B.X-A.X)*t, y=A.Y+(B.Y-A.Y)*t;
+      const pulse=.6+.4*Math.sin((performance.now()*.004)+a*1.3+k*.7);
+      const s=1.3*avDpr*pulse;
+      ax.fillStyle="rgba(100,200,255,.9)";ax.shadowColor="#4da3ff";ax.shadowBlur=7;
+      ax.beginPath();ax.arc(x,y,s*1.8,0,7);ax.fill();
+      ax.fillStyle="#fff";ax.shadowBlur=0;
+      ax.beginPath();ax.arc(x,y,s*.5,0,7);ax.fill();
+    }
+  }
+  ax.shadowBlur=0;
+  // 手指关节光标
+  hp.forEach((p,i)=>{
+    const tip=[4,8,12,16,20].includes(i);
+    const r=tip?3.2:2.2;
+    ax.strokeStyle=tip?"#fff":"#9fd0ff";ax.lineWidth=1*avDpr;ax.shadowColor=tip?"#fff":"#4da3ff";ax.shadowBlur=6;
+    ax.beginPath();
+    ax.moveTo(p.X-r*1.4,p.Y);ax.lineTo(p.X+r*1.4,p.Y);
+    ax.moveTo(p.X,p.Y-r*1.4);ax.lineTo(p.X,p.Y+r*1.4);
+    ax.stroke();ax.shadowBlur=0;
+    ax.fillStyle=tip?"#fff":"#9fd0ff";
+    ax.beginPath();ax.arc(p.X,p.Y,(tip?2.4:1.6)*avDpr,0,7);ax.fill();
+  });
+}
+
+log("姿态灯塔 v7 已启动");
+</script>
+</body>
+</html>
