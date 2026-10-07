@@ -1110,7 +1110,8 @@ function drawAvatar(alive,now){
     if(cvRatio>camRatio){rh=H;rw=H*camRatio;ox=(W-rw)/2;}
     else{rw=W;rh=W/camRatio;oy=(H-rh)/2;}
     const pr=1.3*avDpr;
-    for(let i=0;i<pts.length;i++){
+    // 性能优化：每2个点画1个（减半）
+    for(let i=0;i<pts.length;i+=2){
       const p=pts[i];
       const px=ox+p[0]*rw, py=oy+p[1]*rh;
       const r=p[2],g=p[3],b=p[4];
@@ -1192,13 +1193,12 @@ function drawAvatar(alive,now){
       const nb=cachedPhone.nb||cachedPhone;
       const px=ox+(1-nb.x)*rw, py=oy+nb.y*rh;
       const pw=nb.w*rw*.6, ph=nb.h*rh*.6;
-      // 手机辉光
-      ax.fillStyle="rgba(255,80,80,.15)";ax.shadowColor="#ff5050";ax.shadowBlur=20;
+      // 手机辉光（无shadowBlur）
+      ax.fillStyle="rgba(255,80,80,.2)";
       ax.fillRect(px-pw/2,py-ph/2,pw,ph);
       // 手机边框
       ax.strokeStyle="#ff6464";ax.lineWidth=2*avDpr;
       ax.strokeRect(px-pw/2,py-ph/2,pw,ph);
-      ax.shadowBlur=0;
       // 手机屏幕
       ax.fillStyle="rgba(100,180,255,.2)";
       ax.fillRect(px-pw/2+3*avDpr,py-ph/2+3*avDpr,pw-6*avDpr,ph-6*avDpr);
@@ -1246,7 +1246,7 @@ function drawBody(pts,active,now){
   if(pts[11]&&pts[12]&&pts[23]&&pts[24]){
     const sL=pts[11],sR=pts[12],hL=pts[23],hR=pts[24];
     const visT=active?Math.min(sL.V==null?1:sL.V,sR.V==null?1:sR.V,hL.V==null?1:hL.V,hR.V==null?1:hR.V):1;
-    const TD=60;
+    const TD=30;
     for(let k=0;k<TD;k++){
       const u=((k*7+now*.0003)%1), v=((k*13+now*.0002)%1);
       const topX=sL.X+(sR.X-sL.X)*u, topY=sL.Y+(sR.Y-sL.Y)*u;
@@ -1264,51 +1264,45 @@ function drawBody(pts,active,now){
     const earR=pts[8]||pts[6]||{X:nose.X+15*avDpr,Y:nose.Y};
     const headR=Math.max(22*avDpr, Math.hypot((earL.X-earR.X)/2,(earL.Y-earR.Y)/2)*1.15);
     const visH=active?(nose.V==null?1:nose.V):1;
-    // 头部外圈辉光
-    const hg=ax.createRadialGradient(nose.X,nose.Y,0,nose.X,nose.Y,headR*1.8);
-    hg.addColorStop(0,active?"rgba(120,230,255,.4)":"rgba(80,120,180,.22)");
-    hg.addColorStop(.5,active?"rgba(46,230,168,.22)":"rgba(60,90,140,.14)");
-    hg.addColorStop(1,"rgba(0,0,0,0)");
+    // 头部外圈辉光（简化：纯色代替渐变）
     ax.globalAlpha=active?(.55+.45*visH):.65;
-    ax.fillStyle=hg;ax.beginPath();ax.arc(nose.X,nose.Y,headR*1.8,0,7);ax.fill();
-    // 头部轮廓环（双层）
+    ax.fillStyle=active?"rgba(46,230,168,.22)":"rgba(60,90,140,.14)";
+    ax.beginPath();ax.arc(nose.X,nose.Y,headR*1.8,0,7);ax.fill();
+    // 头部轮廓环（双层，无shadowBlur）
     ax.strokeStyle=active?"rgba(120,230,255,.75)":"rgba(100,140,200,.55)";
-    ax.lineWidth=1.6*avDpr;ax.shadowColor="#5ce0ff";ax.shadowBlur=active?14:0;
+    ax.lineWidth=1.6*avDpr;
     ax.beginPath();ax.arc(nose.X,nose.Y,headR,0,7);ax.stroke();
     ax.strokeStyle=active?"rgba(180,255,235,.4)":"rgba(140,180,220,.3)";
     ax.lineWidth=.8*avDpr;
     ax.beginPath();ax.arc(nose.X,nose.Y,headR*1.15,0,7);ax.stroke();
-    // 头部内部密集光点（50个）
-    for(let k=0;k<50;k++){
-      const ang=(k/50)*Math.PI*2 + now*.0008;
+    // 头部内部光点（24个，精简）
+    for(let k=0;k<24;k++){
+      const ang=(k/24)*Math.PI*2 + now*.0008;
       const rr=headR*(.15+.8*((k*17%100)/100));
       const x=nose.X+Math.cos(ang)*rr, y=nose.Y+Math.sin(ang)*rr*.95;
       dots.push({x,y,z:nose.Z,vis:visH,kind:"head",seed:k*3+5});
     }
-    ax.shadowBlur=0;
   }
   ax.globalAlpha=1;
-  // 4) 绘制所有光点：三层（辉光→彩色→高亮白芯）+ 脉动
+  // 4) 绘制所有光点：单层绘制（性能优化，去掉shadowBlur和多层叠加）
   const t=now*.003;
   for(const d of dots){
     const vis=active?d.vis:1;
     const pulse=.55+.45*Math.sin(t+d.seed*.13);
     const size=(d.kind==="head"?2:d.kind==="torso"?1.6:1.4)*avDpr*pulse;
     const col=active?depthColor(d.z,true):"#2a3a5c";
-    ax.globalAlpha=active?(.3+.7*vis):.6;
-    // 辉光
-    ax.fillStyle=col;ax.shadowColor=col;ax.shadowBlur=active?9:0;
-    ax.beginPath();ax.arc(d.x,d.y,size*2.4,0,7);ax.fill();
-    // 彩色芯
-    ax.fillStyle=active?"rgba(180,255,235,.92)":"#3a4f78";ax.shadowBlur=0;
-    ax.beginPath();ax.arc(d.x,d.y,size*.95,0,7);ax.fill();
-    // 高亮白芯（反光点，脉动峰值时出现）
+    ax.globalAlpha=active?(.35+.65*vis):.6;
+    // 单层绘制：带描边模拟辉光效果
+    ax.fillStyle=col;
+    ax.beginPath();ax.arc(d.x,d.y,size*1.8,0,7);ax.fill();
+    ax.fillStyle=active?"rgba(220,255,245,.85)":"#3a4f78";
+    ax.beginPath();ax.arc(d.x,d.y,size*.7,0,7);ax.fill();
     if(pulse>.72){
       ax.fillStyle="#fff";
-      ax.beginPath();ax.arc(d.x,d.y,size*.42,0,7);ax.fill();
+      ax.beginPath();ax.arc(d.x,d.y,size*.35,0,7);ax.fill();
     }
   }
-  ax.globalAlpha=1;ax.shadowBlur=0;
+  ax.globalAlpha=1;
   // 5) 关节连接球 + 高科技十字光标：33 个关键点（强制绘制）
   for(let i=0;i<pts.length;i++){
     const p=pts[i];if(!p)continue;
@@ -1317,13 +1311,11 @@ function drawBody(pts,active,now){
     const r=(isHead?3.6:2.8)*avDpr;
     const col=active?depthColor(p.Z,true):"#4da3ff";
     ax.globalAlpha=active?(.6+.4*vis):.8;
-    // 关节连接球（大辉光球，让骨骼端点衔接顺滑）
-    const jg=ax.createRadialGradient(p.X,p.Y,0,p.X,p.Y,r*2.5);
-    jg.addColorStop(0,active?"rgba(255,255,255,.9)":"rgba(159,208,255,.7)");
-    jg.addColorStop(.35,col);jg.addColorStop(1,"rgba(0,0,0,0)");
-    ax.fillStyle=jg;ax.shadowColor=col;ax.shadowBlur=active?14:0;
-    ax.beginPath();ax.arc(p.X,p.Y,r*2.5,0,7);ax.fill();
-    ax.shadowBlur=0;
+    // 关节连接球（简化，无shadowBlur）
+    ax.fillStyle=active?"rgba(255,255,255,.7)":"rgba(159,208,255,.5)";
+    ax.beginPath();ax.arc(p.X,p.Y,r*2,0,7);ax.fill();
+    ax.fillStyle=col;
+    ax.beginPath();ax.arc(p.X,p.Y,r*1.2,0,7);ax.fill();
     // 十字光标
     ax.strokeStyle=active?"rgba(220,255,245,.9)":"rgba(159,208,255,.8)";ax.lineWidth=1.1*avDpr;
     ax.beginPath();
@@ -1363,22 +1355,21 @@ function drawHand(hp){
       const x=A.X+(B.X-A.X)*t, y=A.Y+(B.Y-A.Y)*t;
       const pulse=.6+.4*Math.sin((performance.now()*.004)+a*1.3+k*.7);
       const s=1.3*avDpr*pulse;
-      ax.fillStyle="rgba(100,200,255,.9)";ax.shadowColor="#4da3ff";ax.shadowBlur=7;
+      ax.fillStyle="rgba(100,200,255,.9)";
       ax.beginPath();ax.arc(x,y,s*1.8,0,7);ax.fill();
-      ax.fillStyle="#fff";ax.shadowBlur=0;
+      ax.fillStyle="#fff";
       ax.beginPath();ax.arc(x,y,s*.5,0,7);ax.fill();
     }
   }
-  ax.shadowBlur=0;
   // 手指关节光标
   hp.forEach((p,i)=>{
     const tip=[4,8,12,16,20].includes(i);
     const r=tip?3.2:2.2;
-    ax.strokeStyle=tip?"#fff":"#9fd0ff";ax.lineWidth=1*avDpr;ax.shadowColor=tip?"#fff":"#4da3ff";ax.shadowBlur=6;
+    ax.strokeStyle=tip?"#fff":"#9fd0ff";ax.lineWidth=1*avDpr;
     ax.beginPath();
     ax.moveTo(p.X-r*1.4,p.Y);ax.lineTo(p.X+r*1.4,p.Y);
     ax.moveTo(p.X,p.Y-r*1.4);ax.lineTo(p.X,p.Y+r*1.4);
-    ax.stroke();ax.shadowBlur=0;
+    ax.stroke();
     ax.fillStyle=tip?"#fff":"#9fd0ff";
     ax.beginPath();ax.arc(p.X,p.Y,(tip?2.4:1.6)*avDpr,0,7);ax.fill();
   });
