@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-store,no-cache,must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<title>姿态灯塔 · 视觉检测台 v5</title>
+<style>
+  :root{--bg:#070b14;--card:#0f1626;--line:#22304d;--txt:#dbe3f4;--dim:#7e8aa6;--green:#2ee6a8;--blue:#4da3ff;--yellow:#ffd23f;--red:#ff5470;--purple:#b388ff}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--txt);font-family:"PingFang SC","Microsoft YaHei",sans-serif;overflow:hidden}
+  #wrap{position:fixed;inset:0;display:flex;flex-direction:column}
+  #top{padding:8px 12px;display:flex;align-items:center;gap:10px;background:#0a1020;border-bottom:1px solid var(--line);font-size:12.5px}
+  #dot{width:9px;height:9px;border-radius:50%;background:#555;box-shadow:0 0 0 0 transparent}
+  #dot.live{background:var(--green);box-shadow:0 0 9px var(--green);animation:bk 1.2s infinite}
+  #dot.err{background:var(--red);box-shadow:0 0 9px var(--red)}
+  @keyframes bk{50%{opacity:.35}}
+  #st{flex:1;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #st b{color:var(--txt);font-weight:600}
+  #stage{flex:1;position:relative;min-height:0;background:#000}
+  video{display:none}
+  #cv{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+  #load{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:rgba(7,11,20,.94);z-index:5;text-align:center;padding:20px}
+  #load.hide{display:none}
+  .spin{width:42px;height:42px;border:3px solid var(--line);border-top-color:var(--green);border-radius:50%;animation:sp 1s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  #loadMsg{font-size:14px;color:var(--dim);max-width:430px;line-height:1.7}
+  #retry{margin-top:4px;padding:9px 22px;border-radius:9px;border:1px solid var(--green);background:transparent;color:var(--green);font-size:13.5px;cursor:pointer;display:none;font-family:inherit}
+  #solo{position:absolute;left:10px;bottom:10px;z-index:4;background:rgba(8,13,26,.72);border:1px solid var(--line);border-radius:10px;padding:9px 11px;font:11px/1.7 Consolas,monospace;color:#9fb0d0;white-space:pre;max-width:48%;display:none}
+  body.solo #solo{display:block}
+  body.solo{overflow:auto}
+  body.solo #wrap{position:static;height:100vh}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="top">
+    <div id="dot"></div>
+    <div id="st">正在初始化…</div>
+  </div>
+  <div id="stage">
+    <video id="v" playsinline="" muted="" autoplay=""></video>
+    <canvas id="cv"></canvas>
+    <div id="solo"></div>
+    <div id="load">
+      <div class="spin" id="spin"></div>
+      <div id="loadMsg">正在打开摄像头（浏览器弹出询问请点“允许”）…</div>
+      <button id="retry" style="display: none;">重新开始检测</button>
+    </div>
+  </div>
+</div>
+
+<script src="loader_b64.js"></script>
+<script src="wasm_b64.js"></script>
+<script src="models_b64.js"></script>
+<script src="body_models_b64.js" onerror="window.__NO_BODY_MODELS=1"></script>
+<script src="vision_bundle.js"></script>
+<script>
+"use strict";
+/* 姿态灯塔 视觉检测台：摄像头 -> 人脸478点+表情 / 手机目标检测 -> 几何信号，postMessage 给父窗口 */
+const $=id=>document.getElementById(id);
+const video=$("v"),canvas=$("cv"),ctx=canvas.getContext("2d");
+const bc2=document.createElement("canvas");bc2.width=32;bc2.height=24;const bc2Ctx=bc2.getContext("2d",{willReadFrequently:true});
+const stEl=$("st"),dot=$("dot"),loadBox=$("load"),loadMsg=$("loadMsg"),retryBtn=$("retry");
+if(location.search.includes("solo")||!window.parent||window.parent===window)document.body.classList.add("solo");
+
+const POST=o=>{try{window.parent.postMessage(o,"*");}catch(e){}};
+function setStatus(html,cls){stEl.innerHTML=html;dot.className=cls||"";}
+function showLoad(msg,canRetry){loadBox.classList.remove("hide");loadMsg.textContent=msg;retryBtn.style.display=canRetry?"inline-block":"none";}
+function hideLoad(){loadBox.classList.add("hide");}
+
+/* base64 -> blob URL（file:// 下也能用；wasm 必须用 blob 不能用 data URI） */
+function b64Url(b64,mime){
+  const bin=atob(b64),len=bin.length,bytes=new Uint8Array(len);
+  for(let i=0;i<len;i++)bytes[i]=bin.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes],{type:mime}));
+}
+
+let faceLM=null,objDet=null,poseLM=null,handLM=null,segNet=null,stream=null,raf=0,running=false;
+let lastOD=0,lastPB=0,lastTs=-1,lastNose=null,failN=0;
+let phoneBox=null,poseNow=null,handsNow=[],segCloud=null,vizMode="off";
+const VER="v8";
+let fingerTrail=[];   // 指尖拖尾历史（密集动捕模式）
+// 场景粒子化：摄像头画面 -> 彩色粒子点云
+const scCv=document.createElement("canvas");scCv.width=36;scCv.height=27;
+const scCtx=scCv.getContext("2d",{willReadFrequently:true});
+let sceneParticles=null,lastScene=0;
+let POSE_CONN,HAND_CONN,FACE_TESS,FACE_OVAL;
+let fileset=null,fellBack=false,downgrading=false,lastErrMsg="";
+let frameN=0,streakNoFace=0,phoneErr="",delegateMode="GPU";
+let triedGPU=false,triedCPU=false,switching=false,lastBright=0;
+
+/* 两个识别器的构造器（fileset/模型地址在首次加载时固定，降级 CPU 时复用，不再解码30MB） */
+function buildFL(delegate){
+  return Vision.FaceLandmarker.createFromOptions(fileset,{
+    baseOptions:{modelAssetPath:flUrl,delegate},
+    runningMode:"VIDEO",numFaces:1,
+    minFaceDetectionConfidence:.5,minFacePresenceConfidence:.5,minTrackingConfidence:.5,
+    outputFaceBlendshapes:true,outputFacialTransformationMatrixes:true
+  });
+}
+function buildOD(delegate){
+  return Vision.ObjectDetector.createFromOptions(fileset,{
+    baseOptions:{modelAssetPath:odUrl,delegate},
+    runningMode:"VIDEO",maxResults:4,scoreThreshold:.4
+  });
+}
+async function buildTasks(){
+  // GPU 优先（本机真实摄像头实测可用）；创建失败或运行中长期检测不到人脸，再自动切 CPU
+  try{faceLM=await buildFL("GPU");delegateMode="GPU";triedGPU=true;}
+  catch(e){console.warn("GPU人脸创建失败，用CPU",e);faceLM=await buildFL("CPU");delegateMode="CPU";triedCPU=true;fellBack=true;}
+  try{objDet=await buildOD(delegateMode);}
+  catch(e){console.warn(delegateMode+"手机检测失败，试另一个",e);objDet=await buildOD(delegateMode==="GPU"?"CPU":"GPU");}
+  await buildBody(delegateMode);
+  try{
+    POSE_CONN=(Vision.PoseLandmarker&&Vision.PoseLandmarker.POSE_CONNECTIONS)||[];
+    HAND_CONN=(Vision.HandLandmarker&&Vision.HandLandmarker.HAND_CONNECTIONS)||[];
+    FACE_TESS=(Vision.FaceLandmarker&&Vision.FaceLandmarker.FACE_LANDMARKS_TESSELATION)||[];
+    FACE_OVAL=(Vision.FaceLandmarker&&Vision.FaceLandmarker.FACE_LANDMARKS_FACE_OVAL)||[];
+  }catch(_){}
+}
+/* 动捕：身体33点 + 双手各21点 + 逐像素人像分割。模型缺失/创建失败都不影响主功能 */
+let poseUrl="",handUrl="",segUrl="";
+function buildPose(delegate){
+  if(typeof POSE_MODEL_B64==="undefined"||window.__NO_BODY_MODELS)return null;
+  return Vision.PoseLandmarker.createFromOptions(fileset,{
+    baseOptions:{modelAssetPath:poseUrl,delegate},runningMode:"VIDEO",numPoses:1,
+    minPoseDetectionConfidence:.5,minPosePresenceConfidence:.5,minTrackingConfidence:.5});
+}
+function buildHand(delegate){
+  if(typeof HAND_MODEL_B64==="undefined"||window.__NO_BODY_MODELS)return null;
+  return Vision.HandLandmarker.createFromOptions(fileset,{
+    baseOptions:{modelAssetPath:handUrl,delegate},runningMode:"VIDEO",numHands:2,
+    minHandDetectionConfidence:.5,minHandPresenceConfidence:.5,minTrackingConfidence:.5});
+}
+function buildSeg(delegate){
+  if(typeof SEG_MODEL_B64==="undefined"||window.__NO_BODY_MODELS)return null;
+  return Vision.ImageSegmenter.createFromOptions(fileset,{
+    baseOptions:{modelAssetPath:segUrl,delegate},runningMode:"VIDEO"});
+}
+async function buildBody(delegate){
+  try{
+    if(typeof POSE_MODEL_B64!=="undefined"&&!window.__NO_BODY_MODELS&&!poseUrl)poseUrl=b64Url(POSE_MODEL_B64,"application/octet-stream");
+    if(typeof HAND_MODEL_B64!=="undefined"&&!window.__NO_BODY_MODELS&&!handUrl)handUrl=b64Url(HAND_MODEL_B64,"application/octet-stream");
+    if(typeof SEG_MODEL_B64!=="undefined"&&!window.__NO_BODY_MODELS&&!segUrl)segUrl=b64Url(SEG_MODEL_B64,"application/octet-stream");
+  }catch(_){}
+  try{poseLM=await buildPose(delegate);}catch(e){console.warn("姿态模型失败",e);poseLM=null;}
+  try{handLM=await buildHand(delegate);}catch(e){console.warn("手势模型失败",e);handLM=null;}
+  try{segNet=await buildSeg(delegate);}catch(e){console.warn("分割模型失败",e);segNet=null;}
+}
+
+/* 自愈：画面有内容但连续约 6 秒检测不到人脸 -> 引擎与摄像头不兼容，自动换另一个（只换一次） */
+async function switchDelegate(){
+  if(switching)return;
+  const target=delegateMode==="GPU"?"CPU":"GPU";
+  if(target==="CPU"&&triedCPU)return;
+  if(target==="GPU"&&triedGPU)return;
+  switching=true;running=false;cancelAnimationFrame(raf);
+  showLoad("当前"+delegateMode+"引擎识别不到人脸，正在自动切换"+target+"引擎（约2秒，不用重新授权）…",false);
+  POST({type:"warn",msg:delegateMode+"识别无结果，自动切换"+target});
+  try{
+    try{await faceLM.close();}catch(_){}
+    try{await objDet.close();}catch(_){}
+    try{poseLM&&await poseLM.close();}catch(_){}
+    try{handLM&&await handLM.close();}catch(_){}
+    try{segNet&&await segNet.close();}catch(_){}
+    faceLM=await buildFL(target);objDet=await buildOD(target);
+    await buildBody(target);
+    if(target==="CPU"){triedCPU=true;fellBack=true;}else triedGPU=true;
+    delegateMode=target;
+    failN=0;streakNoFace=0;lastTs=-1;lastNose=null;switching=false;
+    hideLoad();setStatus('<b>视觉检测运行中 '+VER+'</b> · '+delegateMode+' · 人脸 + 手机','live');
+    running=true;cancelAnimationFrame(raf);raf=requestAnimationFrame(loop);
+  }catch(e){
+    switching=false;
+    setErr("两种推理引擎都无法工作："+((e&&e.message)||e));
+    POST({type:"fatal",msg:"GPU/CPU 均失败："+((e&&e.message)||e)});
+  }
+}
+
+const r3=(x)=>(Math.round(x*1000)/1000);
+
+const sub=(a,b)=>({x:a.x-b.x,y:a.y-b.y,z:(a.z||0)-(b.z||0)});
+const dot3=(a,b)=>a.x*b.x+a.y*b.y+a.z*b.z;
+const norm=a=>{const l=Math.hypot(a.x,a.y,a.z)||1e-6;return{x:a.x/l,y:a.y/l,z:a.z/l};};
+const cross=(a,b)=>({x:a.y*b.z-a.z*b.y,y:a.z*b.x-a.x*b.z,z:a.x*b.y-a.y*b.x});
+const dist2=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+
+// 真实姿态角：来自面部 4x4 变换矩阵（列主序 16 浮点，旋转部分 R[i][j]=d[j*4+i]）。
+// Tasks Vision 不输出 faceWorldLandmarks，用图像 2D 点估算的角度会被深度压缩到接近 0，
+// 这才是鼻比/俯仰/转头条一直不动的根因。矩阵分解（ZYX 欧拉，y 向下坐标系）：低头 pitch 为正。
+function headAnglesFromMatrix(d){
+  const R00=d[0],R10=d[1],R20=d[2],R21=d[6],R22=d[10];
+  const pitch=Math.atan2(R20,Math.hypot(R00,R10))*180/Math.PI;
+  const yaw=Math.atan2(R10,R00)*180/Math.PI;
+  const roll=Math.atan2(R21,R22)*180/Math.PI;
+  return{pitch,yaw,roll};
+}
+// 兜底路径（理论上现在用不到）：与矩阵分解同一套 ZYX 欧拉公式，避免两条路径量纲不一致
+function headAngles(w){
+  const L=w[234],R=w[454],F=w[10],C=w[152];
+  const x=norm(sub(R,L));
+  let y=norm(sub(C,F));
+  y=norm(sub(y,{x:x.x*dot3(y,x),y:x.y*dot3(y,x),z:x.z*dot3(y,x)}));
+  const z=norm(cross(x,y));
+  const pitch=Math.atan2(z.x,Math.hypot(z.y,z.z))*180/Math.PI;
+  const yaw=Math.atan2(x.y,x.x)*180/Math.PI;
+  const roll=Math.atan2(z.y,z.z)*180/Math.PI;
+  return{pitch,yaw,roll};
+}
+
+let flUrl="",odUrl="";
+async function initModels(){
+  if(typeof Vision==="undefined")throw new Error("vision_bundle.js 未加载（文件缺失？）");
+  if(typeof LOADER_B64==="undefined")throw new Error("loader_b64.js 未加载（文件缺失？）");
+  showLoad("正在装载 WASM 推理引擎…");
+  // file:// 双击打开时不能用 FilesetResolver（它会在 blob 路径后拼文件名，opaque origin 下必失败）。
+  // 直接手工构造 fileset：加载器 JS 与 wasm 各用一个干净的 blob URL，
+  // createFromOptions 内部会注入 locateFile，让 emscripten 从第二个 blob 取 wasm。
+  const loaderUrl=b64Url(LOADER_B64,"application/javascript");
+  const wasmUrl=b64Url(WASM_B64,"application/wasm");
+  fileset={wasmLoaderPath:loaderUrl,wasmBinaryPath:wasmUrl};
+
+  showLoad("正在装载人脸模型（约 8MB）…");
+  flUrl=b64Url(FL_MODEL_B64,"application/octet-stream");
+  showLoad("正在装载手机检测模型（约 4MB）…");
+  odUrl=b64Url(OD_MODEL_B64,"application/octet-stream");
+  await buildTasks();
+}
+
+/* 运行中推理连续失败：不关页面、不销毁摄像头，原地把两个识别器重建为 CPU。
+   这样不会触发 iframe 重建，也就不会反复弹摄像头授权。 */
+async function downgrade(){
+  if(downgrading||fellBack)return;
+  downgrading=true;
+  showLoad("显卡加速与当前摄像头不太兼容，正在切换 CPU 推理（约 3 秒，不用重新授权）…",false);
+  POST({type:"warn",msg:"GPU推理连续出错，自动切换CPU模式"});
+  try{
+    try{await faceLM.close();}catch(_){}
+    try{await objDet.close();}catch(_){}
+    try{poseLM&&await poseLM.close();}catch(_){}
+    try{handLM&&await handLM.close();}catch(_){}
+    try{segNet&&await segNet.close();}catch(_){}
+    faceLM=await buildFL("CPU");
+    objDet=await buildOD("CPU");
+    await buildBody("CPU");
+    fellBack=true;failN=0;lastTs=-1;lastNose=null;
+    hideLoad();
+    setStatus('<b>视觉检测运行中</b> · CPU 兼容模式 · 人脸 + 手机','live');
+    downgrading=false;
+    running=true;
+    cancelAnimationFrame(raf);
+    raf=requestAnimationFrame(loop);
+  }catch(e2){
+    downgrading=false;fellBack=true;
+    const msg="CPU 模式仍无法推理："+((e2&&e2.message)||e2);
+    setErr(msg+"（摄像头不会重开，请点“重新开始检测”或重开网页）");
+    POST({type:"fatal",msg});
+  }
+}
+
+async function initCamera(){
+  showLoad("正在打开摄像头（浏览器弹出询问请点“允许”）…");
+  // 单例保护：重入/重启时先彻底释放旧流，避免同一摄像头被反复抢占
+  if(video.srcObject){try{video.srcObject=null;}catch(_){}}
+  if(stream){try{stream.getTracks().forEach(t=>t.stop());}catch(_){}stream=null;}
+  stream=await navigator.mediaDevices.getUserMedia({
+    video:{width:{ideal:640},height:{ideal:480},facingMode:"user"},audio:false
+  });
+  video.srcObject=stream;
+  await new Promise((res,rej)=>{
+    const to=setTimeout(()=>{
+      try{stream.getTracks().forEach(t=>t.stop());}catch(_){}
+      rej(new Error("摄像头画面加载超时（可能被会议/相机软件占用，关掉后点重试）"));
+    },10000);
+    video.onloadedmetadata=()=>{clearTimeout(to);video.play().then(res).catch(rej);};
+    video.onerror=()=>{clearTimeout(to);rej(new Error("摄像头画面流错误（可能被其他软件占用，关掉会议/相机软件再试）"));};
+  });
+  canvas.width=video.videoWidth||640;
+  canvas.height=video.videoHeight||480;
+}
+
+function blend(bs,name){
+  if(!bs)return 0;
+  const c=bs.categories.find(x=>x.categoryName===name);
+  return c?c.score:0;
+}
+function computeSignal(lm,w,bs,mtx){
+  const nose=lm[1];
+  const eyeMid={x:(lm[33].x+lm[263].x)/2,y:(lm[33].y+lm[263].y)/2};
+  const faceH=Math.max(1e-4,dist2(lm[10],lm[152]));
+  const nr=(nose.y-eyeMid.y)/faceH;
+  const ang=(mtx&&mtx.length>=16)?headAnglesFromMatrix(mtx):headAngles(w);
+  const earL=(dist2(lm[159],lm[145])+dist2(lm[158],lm[153]))/(2*dist2(lm[33],lm[133]));
+  const earR=(dist2(lm[386],lm[374])+dist2(lm[385],lm[380]))/(2*dist2(lm[362],lm[263]));
+  const mar=dist2(lm[13],lm[14])/Math.max(1e-4,dist2(lm[61],lm[291]));
+  let move=0;
+  if(lastNose)move=Math.hypot(nose.x-lastNose.x,nose.y-lastNose.y)/faceH;
+  lastNose={x:nose.x,y:nose.y};
+  return{
+    nr:nr,pitch:ang.pitch,yaw:ang.yaw,roll:ang.roll,
+    ear:Math.min(earL,earR),mar,
+    blink:Math.max(blend(bs,"eyeBlinkLeft"),blend(bs,"eyeBlinkRight")),
+    jaw:blend(bs,"jawOpen"),
+    move:move,nose:nose
+  };
+}
+
+let phoneGrace=0; // 手机检测宽限：检测到后保留 1.2s，避免闪烁丢帧
+function detectPhone(ts){
+  if(ts-lastOD<200)return;
+  lastOD=ts;
+  phoneErr="";
+  try{
+    const r=objDet.detectForVideo(video,ts);
+    const ph=(r.detections||[]).filter(d=>{
+      const c=d.categories[0];
+      // COCO 67 = cell phone；不把遥控器(65)算手机，防误判
+      return c&&(c.categoryName==="cell phone"||c.index===67)&&c.score>=.3;
+    }).sort((a,b)=>b.categories[0].score-a.categories[0].score)[0];
+    if(ph){
+      const b=ph.boundingBox,W=video.videoWidth||640,H=video.videoHeight||480;
+      phoneBox={bbox:b,p:r3(ph.categories[0].score),
+        nb:{x:b.originX/W,y:b.originY/H,w:b.width/W,h:b.height/H}};
+      phoneGrace=1200; // 检测到，重置宽限期
+    }else{
+      phoneGrace-=200;
+      if(phoneGrace<=0)phoneBox=null; // 宽限期过了才清空
+    }
+  }catch(e){phoneErr=String((e&&e.message)||e).slice(0,60);}
+}
+
+/* 逐像素人体掩码 -> 表面点云（带亚像素抖动）+ 轮廓点 */
+function sampleCloud(mask){
+  const{w,h,data,kind}=mask;
+  const isP=(x,y)=>{if(x<0||y<0||x>=w||y>=h)return false;const v=data[y*w+x];return kind==="cat"?v>0:v>.5;};
+  // 密集点云：step=2 采样，上限 10000 点（覆盖整个人体表面的光点矩阵）
+  const step=2,surface=[],edge=[];
+  for(let y=1;y<h-1;y+=step){
+    for(let x=1;x<w-1;x+=step){
+      if(!isP(x,y))continue;
+      const jx=(Math.random()-.5)*step*.8, jy=(Math.random()-.5)*step*.8;
+      surface.push([(x+jx)/w,(y+jy)/h]);
+      if(!(isP(x-step,y)&&isP(x+step,y)&&isP(x,y-step)&&isP(x,y+step)))edge.push([x/w,y/h]);
+      if(surface.length>=10000)return{surface,edge};
+    }
+  }
+  return{surface,edge};
+}
+
+/* 摄像头画面 -> 边缘轮廓粒子点云（只画物体边缘，全息色调，不花屏） */
+function sampleScene(){
+  if(!video||video.readyState<2)return null;
+  try{
+    scCtx.drawImage(video,0,0,scCv.width,scCv.height);
+    const img=scCtx.getImageData(0,0,scCv.width,scCv.height).data;
+    const W=scCv.width,H=scCv.height;
+    const lumAt=(x,y)=>{
+      if(x<0||y<0||x>=W||y>=H)return 0;
+      const i=(y*W+x)*4;
+      return img[i]*0.3+img[i+1]*0.59+img[i+2]*0.11;
+    };
+    const pts=[];
+    for(let y=1;y<H-1;y++){
+      for(let x=1;x<W-1;x++){
+        const c=lumAt(x,y);
+        // 边缘检测：与右、下邻居的亮度差
+        const dx=Math.abs(c-lumAt(x+1,y));
+        const dy=Math.abs(c-lumAt(x,y+1));
+        const edge=Math.max(dx,dy);
+        if(edge<18)continue;  // 只保留明显边缘
+        // 全息色调：亮度映射到青蓝渐变
+        const t=Math.min(1,c/200);
+        const r=Math.round(0+t*40);
+        const g=Math.round(180+t*60);
+        const b=Math.round(255-t*80);
+        pts.push([x/W,y/H,r,g,b]);
+      }
+    }
+    return pts;
+  }catch(e){return null;}
+}
+
+/* ---------- 动捕：身体33点 + 双手21×2，约11Hz，信号独立于人脸 ---------- */
+let handPrev=null,fidgetEMA=0;
+function visOk(p,i){return !p[i]||p[i].visibility===undefined||p[i].visibility>.15;}
+function detectBody(ts){
+  if(ts-lastPB<90)return;
+  lastPB=ts;
+  poseNow=null;handsNow=[];
+  if(poseLM){
+    try{
+      const r=poseLM.detectForVideo(video,ts);
+      if(r.landmarks&&r.landmarks.length)poseNow=r.landmarks[0];
+    }catch(e){}
+  }
+  if(handLM){
+    try{
+      const r=handLM.detectForVideo(video,ts);
+      if(r.landmarks)handsNow=r.landmarks;
+    }catch(e){}
+  }
+  // 人像分割：逐像素人体掩码 -> 表面点云 + 轮廓点（真实像素级动捕点）
+  if(segNet){
+    let mask=null;
+    try{
+      const r=segNet.segmentForVideo(video,ts);
+      if(r.categoryMask){
+        const u8=r.categoryMask.getAsUint8Array();
+        mask={w:r.categoryMask.width,h:r.categoryMask.height,data:u8,kind:"cat"};
+      }else if(r.confidenceMasks&&r.confidenceMasks.length){
+        const cm=r.confidenceMasks[r.confidenceMasks.length-1];
+        mask={w:cm.width,h:cm.height,data:cm.getAsFloat32Array(),kind:"conf"};
+      }
+      if(r.confidenceMasks)r.confidenceMasks.forEach(m=>{try{m.close();}catch(_){}});
+      if(r.categoryMask)try{r.categoryMask.close();}catch(_){}
+    }catch(e){}
+    if(mask)segCloud=sampleCloud(mask);
+  }
+  // 指尖运动量 -> 玩笔/抠手小动作强度
+  let tipMove=0;
+  if(handsNow.length&&handPrev){
+    handsNow.forEach((h,i)=>{
+      if(handPrev[i]){const a=h[8],b=handPrev[i][8];if(a&&b)tipMove=Math.max(tipMove,Math.hypot(a.x-b.x,a.y-b.y));}
+    });
+  }
+  handPrev=handsNow.map(h=>h.map(p=>({x:p.x,y:p.y})));
+  if(handsNow.length)fidgetEMA=fidgetEMA?fidgetEMA*.7+tipMove*.3:tipMove;
+}
+function bodySignal(faceLm){
+  if(!poseNow)return null;
+  const p=poseNow;
+  // 只要肩/髋任一点存在就算，不再卡可见度（上半身出镜也能判）
+  const shL=p[11]||p[12],shR=p[12]||p[11],hpL=p[23]||p[24],hpR=p[24]||p[23];
+  if(!shL||!hpL)return{has:0,sl:0,rc:0,fg:0,asym:0};
+  const shM={x:(shL.x+shR.x)/2,y:(shL.y+shR.y)/2};
+  const hpM={x:(hpL.x+hpR.x)/2,y:(hpL.y+hpR.y)/2};
+  const shW=Math.max(1e-4,Math.hypot(shL.x-shR.x,shL.y-shR.y));
+  const torso=Math.hypot(shM.x-hpM.x,shM.y-hpM.y);
+  // 躯干投影变短 = 含胸/趴桌
+  const sl=Math.max(0,Math.min(1,(1.15-torso/shW)/0.7));
+  // 歪肩
+  const asym=Math.min(1,Math.abs(shL.y-shR.y)/shW/0.25);
+  // 手腕贴近脸（托腮/撑脸）：与鼻、与脸中心两个距离取小
+  let rc=0;
+  const nose=p[0]||shM;
+  const faceC=faceLm?{x:(faceLm[234].x+faceLm[454].x)/2,y:(faceLm[10].y+faceLm[152].y)/2}:nose;
+  [[15,p[15]],[16,p[16]]].forEach(([idx,w])=>{
+    if(!w)return;
+    const d=Math.min(Math.hypot(w.x-nose.x,w.y-nose.y),Math.hypot(w.x-faceC.x,w.y-faceC.y));
+    rc=Math.max(rc,Math.max(0,Math.min(1,(0.95-d/shW)/0.55)));
+  });
+  const fg=Math.max(0,Math.min(1,(fidgetEMA-0.012)/0.05));
+  return{has:1,sl:r3(sl),rc:r3(rc),fg:r3(fg),asym:r3(asym)};
+}
+
+function loop(){
+  if(!running)return;
+  raf=requestAnimationFrame(loop);
+  const ts=Math.round(performance.now());
+  if(ts<=lastTs)return;
+  const dt=lastTs>0?ts-lastTs:16;
+  lastTs=ts;
+  frameN++;
+
+  let face=false,sig=null,curFaceLm=null;
+  try{
+    const fr=faceLM.detectForVideo(video,ts);
+    if(fr.faceLandmarks&&fr.faceLandmarks.length){
+      face=true;curFaceLm=fr.faceLandmarks[0];
+      // 个别帧可能只带 2D 点、缺世界坐标/表情系数，缺了就用 2D 点兜底，绝不让单帧异常炸掉整个检测台
+      const world=(fr.faceWorldLandmarks&&fr.faceWorldLandmarks[0])||curFaceLm;
+      const bs=(fr.faceBlendshapes&&fr.faceBlendshapes[0])||null;
+      const mtx=(fr.facialTransformationMatrixes&&fr.facialTransformationMatrixes[0]&&fr.facialTransformationMatrixes[0].data)||null;
+      sig=computeSignal(curFaceLm,world,bs,mtx);
+    }else{lastNose=null;streakNoFace++;}
+    if(face)streakNoFace=0;
+    failN=0;
+  }catch(e){
+    failN++;
+    lastErrMsg=(e&&e.message)||String(e);
+    // 只有 GPU 兜底模式下才自动降级；默认 CPU 模式持续 ~10 秒真崩才报错，不销毁摄像头
+    if(failN>=50&&!fellBack&&!downgrading){
+      running=false;cancelAnimationFrame(raf);
+      downgrade();
+    }else if(failN>150&&fellBack&&!downgrading){
+      running=false;cancelAnimationFrame(raf);
+      POST({type:"fatal",msg:"视觉推理连续失败（CPU模式）："+lastErrMsg});
+      setErr("推理持续出错："+lastErrMsg);
+    }
+  }
+  // 手机检测独立运行：哪怕人脸被手机挡住、人脸推理报错/返回空，手机框照画、消息照发
+  try{detectPhone(ts);}catch(e){}
+  try{detectBody(ts);}catch(e){}
+
+  // 每 45 帧采一次画面亮度（防把黑屏/镜头盖误判成引擎问题）
+  if((frameN%45)===0){
+    try{
+      bc2.drawImage(video,0,0,32,24);
+      const d2=bc2Ctx.getImageData(0,0,32,24).data;let s=0;
+      for(let i=0;i<d2.length;i+=4)s+=(d2[i]+d2[i+1]+d2[i+2])/3;
+      lastBright=s/(32*24);
+    }catch(_){}
+  }
+  // 画面有亮度但连续约 200 帧（~8s）没脸：自动换推理引擎
+  if(streakNoFace>200&&lastBright>18&&!switching){switchDelegate();}
+
+  draw(face,sig,curFaceLm);
+  const m={type:"sig",t:Date.now(),face};
+  if(face&&sig){
+    m.nr=r3(sig.nr);m.pitch=r3(sig.pitch);m.yaw=r3(sig.yaw);m.roll=r3(sig.roll);
+    m.ear=r3(sig.ear);m.mar=r3(sig.mar);m.blink=r3(sig.blink);m.jaw=r3(sig.jaw);m.move=r3(sig.move);
+  }
+  const bs2=bodySignal(curFaceLm);
+  if(bs2)m.pose=bs2;
+  // 完整 3D 坐标流：驱动主控页下方的神经链数字人
+  if(poseNow){
+    m.p33=poseNow.map(p=>(p.visibility===undefined?[r3(p.x),r3(p.y),r3(p.z||0),1]:
+      [r3(p.x),r3(p.y),r3(p.z||0),Math.max(0,Math.min(1,p.visibility))]));
+  }
+  if(handsNow.length){
+    m.h42=handsNow.map(hh=>hh.map(p=>[r3(p.x),r3(p.y),r3(p.z||0)]));
+  }
+  if(phoneBox)m.phone=phoneBox;
+  if(frameN%10===0)m.bri=Math.round(lastBright);
+  // 场景粒子化：每 3 帧采样一次摄像头画面为彩色粒子
+  if(frameN%3===0){
+    const sp=sampleScene();
+    if(sp&&sp.length){
+      // 压缩：x,y,r,g,b 各 1 字节 -> Uint8Array -> base64
+      const buf=new Uint8Array(sp.length*5);
+      for(let i=0;i<sp.length;i++){
+        const[px,py,pr,pg,pb]=sp[i];
+        buf[i*5]=Math.round(px*255);
+        buf[i*5+1]=Math.round(py*255);
+        buf[i*5+2]=pr;buf[i*5+3]=pg;buf[i*5+4]=pb;
+      }
+      let bin="";
+      for(let i=0;i<buf.length;i++)bin+=String.fromCharCode(buf[i]);
+      m.scene=btoa(bin);
+      m.sceneN=sp.length;
+    }
+  }
+  POST(m);
+  if(document.body.classList.contains("solo"))soloText(face,sig);
+}
+
+function drawConnPath(pts,conn,w,h){
+  ctx.beginPath();
+  for(const c of conn){
+    const a=pts[c.start],b=pts[c.end];if(!a||!b)continue;
+    ctx.moveTo(a.x*w,a.y*h);ctx.lineTo(b.x*w,b.y*h);
+  }
+  ctx.stroke();
+}
+function drawDots(pts,w,h,r,color,alpha){
+  ctx.fillStyle=color;ctx.globalAlpha=alpha==null?1:alpha;
+  ctx.beginPath();
+  for(const p of pts){if(!p)continue;ctx.moveTo(p.x*w+r,p.y*h);ctx.arc(p.x*w,p.y*h,r,0,7);}
+  ctx.fill();ctx.globalAlpha=1;
+}
+function drawMocap(faceLm,w,h){
+  const t=Date.now()/1000;
+  // ===== 全息蓝点云：粒子流动 + 高度渐变 + 呼吸脉动 =====
+  if(segCloud){
+    const surf=segCloud.surface;
+    for(let i=0;i<surf.length;i++){
+      const p=surf[i];
+      const yf=p[1];
+      // 粒子流动：x 方向随时间轻微漂移，像能量粒子
+      const drift=Math.sin(t*2+i*.3)*0.003;
+      const px=(p[0]+drift)*w, py=p[1]*h;
+      // 全息蓝青色调：底部青绿 #00ffd0 → 顶部全息蓝 #00aaff
+      const pulse=.5+.5*Math.sin(t*3.5+i*.6);
+      const r=Math.round(0+yf*60), g=Math.round(255-yf*100), b=Math.round(208+yf*47);
+      ctx.fillStyle="rgba("+r+","+g+","+b+","+(.18+(i%4)*.05)*pulse+")";
+      ctx.fillRect(px,py,2,2);
+    }
+    // 轮廓边：强辉光紫色
+    ctx.shadowColor="#b388ff";ctx.shadowBlur=14;ctx.fillStyle="#e9d5ff";
+    for(const p of segCloud.edge){
+      const pulse=.7+.3*Math.sin(t*5+p[0]*30);
+      ctx.globalAlpha=pulse;
+      ctx.fillRect(p[0]*w-1.2,p[1]*h-1.2,3,3);
+    }
+    ctx.globalAlpha=1;ctx.shadowBlur=0;
+  }
+  // ===== 拖尾残影（延迟光轨）=====
+  const snap={t:Date.now(),pose:poseNow?poseNow.map(p=>({x:p.x,y:p.y})):null,
+    hands:handsNow.map(hh=>hh.map(p=>({x:p.x,y:p.y})))};
+  fingerTrail.push(snap);if(fingerTrail.length>14)fingerTrail.shift();
+  for(let i=0;i<fingerTrail.length;i++){
+    const s=fingerTrail[i],a=(i+1)/fingerTrail.length;
+    if(!s.pose)continue;
+    ctx.globalAlpha=a*.14;ctx.strokeStyle="#00eaff";ctx.lineWidth=1.6;
+    drawConnPath(s.pose,POSE_CONN,w,h);
+    s.hands.forEach(hh=>{ctx.strokeStyle="#00d4ff";drawConnPath(hh,HAND_CONN,w,h);});
+  }
+  ctx.globalAlpha=1;
+  // ===== 脸部全息网格 =====
+  if(faceLm){
+    ctx.strokeStyle="rgba(0,234,255,.28)";ctx.lineWidth=.5;
+    drawConnPath(faceLm,FACE_TESS,w,h);
+    ctx.strokeStyle="rgba(0,255,208,.8)";ctx.lineWidth=1.3;
+    drawConnPath(faceLm,FACE_OVAL,w,h);
+    drawDots(faceLm,w,h,1,"#00eaff",.8);
+  }
+  // ===== 身体骨架：三层神经链（辉光+彩色+白芯）+ 密集光点 + 神经脉冲 =====
+  if(poseNow){
+    // 外层强辉光
+    ctx.shadowColor="#00ffd0";ctx.shadowBlur=18;
+    ctx.strokeStyle="#00ffd0";ctx.lineWidth=2.6;drawConnPath(poseNow,POSE_CONN,w,h);
+    ctx.shadowBlur=0;
+    // 中层全息蓝
+    ctx.strokeStyle="#00aaff";ctx.lineWidth=1.4;drawConnPath(poseNow,POSE_CONN,w,h);
+    // 内层高亮白芯
+    ctx.strokeStyle="rgba(220,255,255,.95)";ctx.lineWidth=.7;drawConnPath(poseNow,POSE_CONN,w,h);
+    // 骨骼密集光点：每段 14 个发光粒子（三层辉光+彩色+白芯）
+    for(const c of POSE_CONN){
+      const a=poseNow[c.start],b=poseNow[c.end];if(!a||!b)continue;
+      for(let k=0;k<=14;k++){
+        const tt=k/14;
+        const x=(a.x+(b.x-a.x)*tt)*w, y=(a.y+(b.y-a.y)*tt)*h;
+        const pulse=.6+.4*Math.sin(t*4+c.start*1.7+k*.5);
+        // 辉光
+        ctx.fillStyle="rgba(0,255,208,"+.25*pulse+")";
+        ctx.beginPath();ctx.arc(x,y,3.5,0,7);ctx.fill();
+        // 彩色芯
+        ctx.fillStyle="#00ffd0";
+        ctx.beginPath();ctx.arc(x,y,1.4,0,7);ctx.fill();
+        // 白芯反光点
+        if(pulse>.7){ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(x,y,.7,0,7);ctx.fill();}
+      }
+    }
+    // 沿骨骼流动的神经脉冲光点
+    for(let i=0;i<POSE_CONN.length;i++){
+      const c=POSE_CONN[i],a=poseNow[c.start],b=poseNow[c.end];if(!a||!b)continue;
+      const ph=((t*.6+i*.21)%1);
+      const x=(a.x+(b.x-a.x)*ph)*w,y=(a.y+(b.y-a.y)*ph)*h;
+      ctx.shadowColor="#fff";ctx.shadowBlur=16;
+      ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(x,y,3,0,7);ctx.fill();
+      ctx.shadowBlur=0;
+    }
+    // 关节辉光球（肩/髋/肘/膝/腕/踝）强脉动 + 十字光标
+    [11,12,13,14,15,16,23,24,25,26,27,28].forEach(i=>{
+      const p=poseNow[i];if(!p)return;
+      const px=p.x*w,py=p.y*h;
+      const pulse=1+.35*Math.sin(t*5+i*.7);
+      // 辉光球
+      ctx.shadowColor="#00ffd0";ctx.shadowBlur=20*pulse;
+      ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(px,py,4*pulse,0,7);ctx.fill();
+      ctx.shadowBlur=0;
+      // 十字光标
+      ctx.strokeStyle="rgba(0,255,208,.8)";ctx.lineWidth=1;
+      ctx.beginPath();
+      ctx.moveTo(px-8,py);ctx.lineTo(px+8,py);
+      ctx.moveTo(px,py-8);ctx.lineTo(px,py+8);
+      ctx.stroke();
+    });
+    // ===== HUD 人体检测框：围绕身体的矩形 + 四角 + 数据流 =====
+    const xs=poseNow.map(p=>p.x), ys=poseNow.map(p=>p.y);
+    const bx=Math.min(...xs)*w, by=Math.min(...ys)*h, bw=(Math.max(...xs)-Math.min(...xs))*w, bh=(Math.max(...ys)-Math.min(...ys))*h;
+    const padX=bw*.08, padY=bh*.06;
+    const bx2=bx-padX, by2=by-padY, bw2=bw+padX*2, bh2=bh+padY*2;
+    // 半透明检测框
+    ctx.strokeStyle="rgba(0,234,255,.5)";ctx.lineWidth=1;
+    ctx.strokeRect(bx2,by2,bw2,bh2);
+    // 四角加粗
+    const cl=12;
+    ctx.strokeStyle="#00eaff";ctx.lineWidth=2.5;ctx.shadowColor="#00eaff";ctx.shadowBlur=8;
+    ctx.beginPath();
+    ctx.moveTo(bx2,by2+cl);ctx.lineTo(bx2,by2);ctx.lineTo(bx2+cl,by2);
+    ctx.moveTo(bx2+bw2-cl,by2);ctx.lineTo(bx2+bw2,by2);ctx.lineTo(bx2+bw2,by2+cl);
+    ctx.moveTo(bx2,by2+bh2-cl);ctx.lineTo(bx2,by2+bh2);ctx.lineTo(bx2+cl,by2+bh2);
+    ctx.moveTo(bx2+bw2-cl,by2+bh2);ctx.lineTo(bx2+bw2,by2+bh2);ctx.lineTo(bx2+bw2,by2+bh2-cl);
+    ctx.stroke();ctx.shadowBlur=0;
+    // 数据流标签
+    ctx.fillStyle="#00eaff";ctx.font="10px monospace";
+    ctx.fillText("HUMAN · "+Math.round(bw2)+"x"+Math.round(bh2), bx2+2, by2-4);
+    ctx.fillText("JOINTS:33", bx2+bw2-70, by2-4);
+  }
+  // ===== 双手：全息蓝辉光 + 密集光点 =====
+  handsNow.forEach(hh=>{
+    ctx.shadowColor="#00d4ff";ctx.shadowBlur=14;
+    ctx.strokeStyle="#00d4ff";ctx.lineWidth=2;drawConnPath(hh,HAND_CONN,w,h);
+    ctx.shadowBlur=0;
+    // 指骨密集光点
+    for(const c of HAND_CONN){
+      const a=hh[c.start],b=hh[c.end];if(!a||!b)continue;
+      const len=Math.hypot(b.x-a.x,b.y-a.y);
+      const N=Math.max(3,Math.round(len*w/4));
+      for(let k=0;k<=N;k++){
+        const tt=k/N;
+        const x=(a.x+(b.x-a.x)*tt)*w, y=(a.y+(b.y-a.y)*tt)*h;
+        const pulse=.6+.4*Math.sin(t*5+c.start*1.3+k*.7);
+        ctx.fillStyle="rgba(0,234,255,"+.3*pulse+")";
+        ctx.beginPath();ctx.arc(x,y,3,0,7);ctx.fill();
+        ctx.fillStyle="#00eaff";
+        ctx.beginPath();ctx.arc(x,y,1.2,0,7);ctx.fill();
+        if(pulse>.7){ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(x,y,.6,0,7);ctx.fill();}
+      }
+    }
+    drawDots(hh,w,h,2.2,"#00eaff",.95);
+    [4,8,12,16,20].forEach(i=>{const p=hh[i];if(!p)return;
+      const px=p.x*w,py=p.y*h;
+      const pulse=1+.3*Math.sin(t*6+i);
+      ctx.shadowColor="#fff";ctx.shadowBlur=12*pulse;
+      ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(px,py,3.6*pulse,0,7);ctx.fill();
+      ctx.shadowBlur=0;
+      // 指尖十字光标
+      ctx.strokeStyle="rgba(0,234,255,.7)";ctx.lineWidth=1;
+      ctx.beginPath();
+      ctx.moveTo(px-6,py);ctx.lineTo(px+6,py);
+      ctx.moveTo(px,py-6);ctx.lineTo(px,py+6);
+      ctx.stroke();
+    });
+  });
+  // ===== 多层全息扫描线 =====
+  if(segCloud){
+    for(let s=0;s<3;s++){
+      const scanY=((t*(.15+s*.08)+s*.33)%1)*h;
+      const grd=ctx.createLinearGradient(0,scanY-40,0,scanY+40);
+      grd.addColorStop(0,"rgba(0,234,255,0)");
+      grd.addColorStop(.5,"rgba(0,234,255,"+(.12-s*.02)+")");
+      grd.addColorStop(1,"rgba(0,234,255,0)");
+      ctx.fillStyle=grd;ctx.fillRect(0,scanY-40,w,80);
+    }
+    // 细扫描线
+    const thinY=((t*.5)%1)*h;
+    ctx.fillStyle="rgba(0,255,208,.5)";ctx.fillRect(0,thinY,w,1.5);
+  }
+  // ===== 全息数据噪点颗粒 =====
+  ctx.fillStyle="rgba(0,234,255,.04)";
+  for(let i=0;i<60;i++){
+    ctx.fillRect(Math.random()*w,Math.random()*h,1,1);
+  }
+}
+function drawSkeleton(faceLm,w,h){
+  if(faceLm)drawDots(faceLm,w,h,1.4,"#4da3ff",.55);
+  if(poseNow){
+    ctx.strokeStyle="rgba(46,230,168,.8)";ctx.lineWidth=2.5;drawConnPath(poseNow,POSE_CONN,w,h);
+    drawDots(poseNow,w,h,3,"#2ee6a8",1);
+  }
+  handsNow.forEach(hh=>{
+    ctx.strokeStyle="rgba(77,163,255,.85)";ctx.lineWidth=2;drawConnPath(hh,HAND_CONN,w,h);
+    drawDots(hh,w,h,2.4,"#4da3ff",1);
+  });
+}
+function draw(face,sig,faceLm){
+  const w=canvas.width,h=canvas.height;
+  ctx.save();
+  ctx.translate(w,0);ctx.scale(-1,1);
+  ctx.drawImage(video,0,0,w,h);
+  if(phoneBox){
+    const b=phoneBox.bbox;
+    ctx.strokeStyle="#ff5470";ctx.lineWidth=3;
+    ctx.strokeRect(b.originX,b.originY,b.width,b.height);
+  }
+  const moc=vizMode!=="off";
+  if(moc){
+    if(vizMode==="mocap")drawMocap(faceLm,w,h);else drawSkeleton(faceLm,w,h);
+  }else if(face&&sig){
+    // 当前 ctx 已做镜像变换，landmark 用原始坐标即可与画面贴合
+    ctx.fillStyle="#2ee6a8";
+    ctx.beginPath();ctx.arc(sig.nose.x*w,sig.nose.y*h,4,0,7);ctx.fill();
+  }
+  ctx.restore();
+  const nPts=(face?478:0)+(poseNow?33:0)+handsNow.length*21+(vizMode==="mocap"&&segCloud?segCloud.surface.length+segCloud.edge.length:0);
+  const lines=[];
+  lines.push(VER+" "+(face?"FACE OK ":"NO FACE ")+delegateMode+" f"+frameN+" x"+streakNoFace);
+  lines.push((video.videoWidth||0)+"x"+(video.videoHeight||0)+"  err"+failN+" bright"+lastBright.toFixed(0));
+  if(face&&sig)lines.push("pit "+sig.pitch.toFixed(1)+" ear "+sig.ear.toFixed(2)+" mar "+sig.mar.toFixed(2));
+  lines.push(phoneBox?("PHONE "+phoneBox.p):(phoneErr?("phoneErr "+phoneErr):"no phone"));
+  ctx.fillStyle="rgba(8,13,26,.72)";ctx.fillRect(8,8,250,14*lines.length+12);
+  ctx.font="bold 12.5px Consolas,monospace";
+  ctx.fillStyle=face?"#2ee6a8":"#ff5470";
+  ctx.fillText(lines[0],16,27);
+  ctx.fillStyle="#9fb0d0";
+  for(let i=1;i<lines.length;i++)ctx.fillText(lines[i],16,27+14*i);
+  if(moc){
+    const tag=vizMode==="mocap"?"⚡ MOCAP DENSE":"◈ SKELETON";
+    ctx.font="bold 15px Consolas,monospace";ctx.fillStyle=vizMode==="mocap"?"#b388ff":"#4da3ff";
+    ctx.textAlign="right";ctx.fillText(tag,w-12,26);
+    ctx.font="bold 22px Consolas,monospace";ctx.fillStyle="#2ee6a8";
+    ctx.fillText(nPts,w-12,54);
+    ctx.font="11px Consolas,monospace";ctx.fillStyle="#9fb0d0";
+    ctx.fillText("MOTION POINTS",w-12,70);ctx.textAlign="left";
+  }
+}
+
+function soloText(face,sig){
+  if(!face){$("solo").textContent="未检测到人脸";return;}
+  $("solo").textContent=
+    "nr   "+sig.nr.toFixed(3)+"\n"+
+    "pit  "+sig.pitch.toFixed(1)+"°\n"+
+    "yaw  "+sig.yaw.toFixed(1)+"°\n"+
+    "ear  "+sig.ear.toFixed(3)+"\n"+
+    "mar  "+sig.mar.toFixed(3)+"\n"+
+    "blink"+sig.blink.toFixed(2)+"\n"+
+    "jaw  "+sig.jaw.toFixed(2)+"\n"+
+    "move "+sig.move.toFixed(4)+"\n"+
+    (phoneBox?"phone "+phoneBox.p:"phone —");
+}
+
+setInterval(()=>POST({type:"hb",t:Date.now()}),1000);
+
+function snap(quality){
+  try{
+    const c=document.createElement("canvas");
+    c.width=canvas.width;c.height=canvas.height;
+    c.getContext("2d").drawImage(canvas,0,0);
+    return c.toDataURL("image/jpeg",quality||.55);
+  }catch(e){return null;}
+}
+window.addEventListener("message",e=>{
+  const d=e.data;
+  if(!d||typeof d!=="object")return;
+  if(d.type==="snap")POST({type:"shot",id:d.id||0,url:snap(.55),t:Date.now()});
+  if(d.type==="restart")location.reload();
+  if(d.type==="viz"){vizMode=d.mode||"off";fingerTrail=[];POST({type:"vizAck",mode:vizMode});}
+});
+
+function setErr(msg){
+  dot.className="err";
+  stEl.innerHTML='<b style="color:var(--red)">检测台故障</b>';
+  showLoad(msg,true);
+}
+let booting=false;
+async function boot(){
+  if(booting)return;
+  booting=true;
+  try{
+    running=false;cancelAnimationFrame(raf);
+    retryBtn.style.display="none";
+    await initModels();
+    await initCamera();
+    booting=false;
+    hideLoad();
+    running=true;lastTs=-1;lastNose=null;
+    setStatus('<b>视觉检测运行中 '+VER+'</b> · '+delegateMode+' · 人脸 + 手机','live');
+    POST({type:"ready"});
+    cancelAnimationFrame(raf);
+    raf=requestAnimationFrame(loop);
+  }catch(e){
+    booting=false;
+    console.error(e);
+    const msg=(e&&e.message)?e.message:(e&&e.type?("加载失败事件："+e.type):(String(e||"未知错误")));
+    setErr(msg.includes("Permission")||msg.includes("NotAllowed")
+      ? "摄像头权限被拒绝：点浏览器地址栏左侧的摄像头图标，允许后点“重新开始检测”。"
+      : msg+"（点“重新开始检测”再试；不行就关掉页面重开）");
+    POST({type:"fatal",msg});
+  }
+}
+retryBtn.onclick=boot;
+
+window.addEventListener("message",e=>{
+  if(e.data&&e.data.type==="start")boot();
+});
+setTimeout(()=>{ if(document.body.classList.contains("solo"))boot(); else POST({type:"detector_loaded"}); },300);
+
+window.addEventListener("beforeunload",()=>{try{stream&&stream.getTracks().forEach(t=>t.stop());}catch(e){}});
+</script>
+</body>
+</html>
